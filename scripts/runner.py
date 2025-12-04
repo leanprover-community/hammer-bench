@@ -198,7 +198,11 @@ def get_run_config(preset_name: str, provider_name: Optional[str] = None,
 
 
 def build_lake_command(config: RunConfig) -> tuple:
-    """Build the lake command with appropriate -K flags.
+    """Build the lake command using the generic TRY_AT_EACH_STEP_* mechanism.
+
+    All tactics are run via the generic tryAtEachStepFromEnv linter using
+    environment variables. This avoids needing specialized linter options
+    for each tactic variant.
 
     Args:
         config: Run configuration (includes targets)
@@ -209,24 +213,38 @@ def build_lake_command(config: RunConfig) -> tuple:
     cmd = ["lake", "build"] + config.targets
     env_vars = {}
 
-    # Add linter flags
     linters = config.linters
-    if linters.tryAtEachStepGrind:
-        cmd.append("-Klinter.tacticAnalysis.tryAtEachStepGrind=true")
-    if linters.tryAtEachStepSimpAll:
-        cmd.append("-Klinter.tacticAnalysis.tryAtEachStepSimpAll=true")
-    if linters.tryAtEachStepAesop:
-        cmd.append("-Klinter.tacticAnalysis.tryAtEachStepAesop=true")
-    if linters.tryAtEachStepGrindSuggestions:
-        cmd.append("-Klinter.tacticAnalysis.tryAtEachStepGrindSuggestions=true")
-    if linters.tryAtEachStepSimpAllSuggestions:
-        cmd.append("-Klinter.tacticAnalysis.tryAtEachStepSimpAllSuggestions=true")
 
-    # Handle custom tactic via environment variables
+    # Determine which tactic to run via the generic mechanism
+    # Priority: customTactic > specialized flags
+    tactic = None
+    label = None
+
     if linters.customTactic:
+        tactic = linters.customTactic
+        label = linters.customTacticLabel or tactic
+    elif linters.tryAtEachStepGrind:
+        tactic = "grind"
+        label = "grind"
+    elif linters.tryAtEachStepSimpAll:
+        tactic = "simp_all"
+        label = "simp_all"
+    elif linters.tryAtEachStepAesop:
+        tactic = "aesop"
+        label = "aesop"
+    elif linters.tryAtEachStepGrindSuggestions:
+        tactic = "grind +suggestions"
+        label = "grind +suggestions"
+    elif linters.tryAtEachStepSimpAllSuggestions:
+        # Note: the `try` is needed to avoid errors in some edge cases
+        tactic = "try simp_all? +suggestions"
+        label = "simp_all +suggestions"
+
+    # Use the generic env var mechanism for all tactics
+    if tactic:
         cmd.append("-Klinter.tacticAnalysis.tryAtEachStepFromEnv=true")
-        env_vars["TRY_AT_EACH_STEP_TACTIC"] = linters.customTactic
-        env_vars["TRY_AT_EACH_STEP_LABEL"] = linters.customTacticLabel or linters.customTactic
+        env_vars["TRY_AT_EACH_STEP_TACTIC"] = tactic
+        env_vars["TRY_AT_EACH_STEP_LABEL"] = label
 
     # Add fraction if not 1
     if linters.fraction != 1:
