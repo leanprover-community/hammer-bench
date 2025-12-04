@@ -13,9 +13,9 @@ from typing import Optional
 
 try:
     import yaml
-    YAML_AVAILABLE = True
 except ImportError:
-    YAML_AVAILABLE = False
+    print("Error: pyyaml is required. Install with: pip install pyyaml", file=sys.stderr)
+    sys.exit(1)
 
 from .core import (
     LinterConfig,
@@ -37,67 +37,30 @@ from .parser import parse_build_output
 
 
 def load_presets() -> dict:
-    """Load presets from config/presets.yaml or presets.json."""
-    hammer_dir = get_hammer_bench_dir()
-
-    # Try YAML first if available
-    if YAML_AVAILABLE:
-        presets_file = hammer_dir / "config" / "presets.yaml"
-        if presets_file.exists():
-            with open(presets_file) as f:
-                return yaml.safe_load(f) or {}
-
-    # Fall back to JSON
-    presets_file = hammer_dir / "config" / "presets.json"
+    """Load presets from config/presets.yaml."""
+    presets_file = get_hammer_bench_dir() / "config" / "presets.yaml"
     if presets_file.exists():
         with open(presets_file) as f:
-            return json.load(f)
-
-    if not YAML_AVAILABLE:
-        print("Warning: pyyaml not installed. Use presets.json or install pyyaml.", file=sys.stderr)
-
+            return yaml.safe_load(f) or {}
     return {}
 
 
 def load_providers() -> dict:
-    """Load providers from config/providers.yaml or providers.json."""
-    hammer_dir = get_hammer_bench_dir()
-
-    # Try YAML first if available
-    if YAML_AVAILABLE:
-        providers_file = hammer_dir / "config" / "providers.yaml"
-        if providers_file.exists():
-            with open(providers_file) as f:
-                data = yaml.safe_load(f) or {}
-                return data.get("providers", {})
-
-    # Fall back to JSON
-    providers_file = hammer_dir / "config" / "providers.json"
+    """Load providers from config/providers.yaml."""
+    providers_file = get_hammer_bench_dir() / "config" / "providers.yaml"
     if providers_file.exists():
         with open(providers_file) as f:
-            data = json.load(f)
+            data = yaml.safe_load(f) or {}
             return data.get("providers", {})
-
     return {}
 
 
 def load_targets() -> dict:
-    """Load target collections from config/targets.yaml or targets.json."""
-    hammer_dir = get_hammer_bench_dir()
-
-    # Try YAML first if available
-    if YAML_AVAILABLE:
-        targets_file = hammer_dir / "config" / "targets.yaml"
-        if targets_file.exists():
-            with open(targets_file) as f:
-                return yaml.safe_load(f) or {}
-
-    # Fall back to JSON
-    targets_file = hammer_dir / "config" / "targets.json"
+    """Load target collections from config/targets.yaml."""
+    targets_file = get_hammer_bench_dir() / "config" / "targets.yaml"
     if targets_file.exists():
         with open(targets_file) as f:
-            return json.load(f)
-
+            return yaml.safe_load(f) or {}
     return {}
 
 
