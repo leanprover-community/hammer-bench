@@ -1,0 +1,25 @@
+# Suggestion providers for hammer tactics
+# These configure the set_library_suggestions command in Mathlib.Init
+
+providers:
+  # Default: no custom suggestion provider
+  # Uses whatever is configured in the Mathlib commit being tested
+  default:
+    command: null
+    description: "Use default suggestion provider (no modification)"
+
+  # Sine Qua Non selector - a specific suggestion algorithm
+  sineQuaNon:
+    command: "Lean.LibrarySuggestions.sineQuaNonSelector"
+    description: "Use the Sine Qua Non suggestion selector"
+
+  # Disabled - returns empty suggestions
+  disabled:
+    command: "fun _ _ => pure #[]"
+    description: "Disable suggestions entirely (return empty list)"
+
+  # Custom providers can be added here as experiments progress
+  # Example:
+  # myCustomProvider:
+  #   command: "MyNamespace.mySuggestionSelector"
+  #   description: "My experimental suggestion algorithm"

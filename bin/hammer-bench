@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Hammer benchmarking tool for Mathlib
+# Entry point script
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HAMMER_BENCH_DIR="$(dirname "$SCRIPT_DIR")"
+
+exec python3 -m scripts "$@"
