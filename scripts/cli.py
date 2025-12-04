@@ -138,6 +138,17 @@ def create_parser() -> argparse.ArgumentParser:
         help="Remove runs older than this many days",
     )
 
+    # selftest command
+    selftest_parser = subparsers.add_parser(
+        "selftest",
+        help="Run self-tests to verify hammer-bench is working",
+    )
+    selftest_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be run without actually running",
+    )
+
     return parser
 
 
@@ -181,6 +192,9 @@ def main(args=None):
     elif parsed.command == "cleanup":
         from .commands import cmd_cleanup
         return cmd_cleanup(parsed)
+    elif parsed.command == "selftest":
+        from .commands import cmd_selftest
+        return cmd_selftest(parsed)
     else:
         parser.print_help()
         return 1

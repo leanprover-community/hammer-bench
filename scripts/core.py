@@ -71,6 +71,43 @@ class SuggestionProvider:
 
 
 @dataclass
+class SourceSpec:
+    """Specification of which mathlib repository and ref to use.
+
+    Examples:
+        leanprover-community/mathlib4@master
+        leanprover-community/mathlib4-nightly-testing@hammer_measurements
+        leanprover-community/mathlib4@nightly-testing-2025-12-01
+    """
+    repo: str  # e.g., "leanprover-community/mathlib4"
+    ref: str   # e.g., "master", "hammer_measurements", "nightly-testing-2025-12-01"
+
+    @property
+    def github_url(self) -> str:
+        return f"https://github.com/{self.repo}.git"
+
+    def to_dict(self) -> dict:
+        return {"repo": self.repo, "ref": self.ref}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "SourceSpec":
+        return cls(repo=d["repo"], ref=d["ref"])
+
+    @classmethod
+    def parse(cls, spec: str) -> "SourceSpec":
+        """Parse a source spec string like 'owner/repo@ref'."""
+        if "@" not in spec:
+            raise ValueError(f"Invalid source spec '{spec}' - must be 'owner/repo@ref'")
+        repo, ref = spec.rsplit("@", 1)
+        if "/" not in repo:
+            raise ValueError(f"Invalid repo '{repo}' - must be 'owner/repo'")
+        return cls(repo=repo.strip(), ref=ref.strip())
+
+    def __str__(self) -> str:
+        return f"{self.repo}@{self.ref}"
+
+
+@dataclass
 class RunConfig:
     """Configuration for a benchmark run."""
     preset_name: str
@@ -159,12 +196,13 @@ class RunMetadata:
     duration_seconds: Optional[int]
     config: RunConfig
     status: str  # "running", "completed", "failed", "timed_out"
+    source: Optional[SourceSpec] = None  # Explicit repo/ref specification
     message_count: int = 0
     timed_out: bool = False
     error: Optional[str] = None
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "run_id": self.run_id,
             "machine": self.machine,
             "base_commit": self.base_commit,
@@ -179,6 +217,9 @@ class RunMetadata:
             "timed_out": self.timed_out,
             "error": self.error,
         }
+        if self.source:
+            d["source"] = self.source.to_dict()
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "RunMetadata":
@@ -193,6 +234,7 @@ class RunMetadata:
             duration_seconds=d.get("duration_seconds"),
             config=RunConfig.from_dict(d["config"]),
             status=d["status"],
+            source=SourceSpec.from_dict(d["source"]) if d.get("source") else None,
             message_count=d.get("message_count", 0),
             timed_out=d.get("timed_out", False),
             error=d.get("error"),

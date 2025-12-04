@@ -1,0 +1,80 @@
+name: Self-Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60  # Allow up to 1 hour for the full test
+
+    steps:
+      - name: Checkout hammer-bench
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Install elan
+        run: |
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Initialize hammer-bench
+        run: |
+          # Create hammer-bench directory structure
+          mkdir -p ~/hammer-bench/config ~/hammer-bench/runs
+
+          # Copy config files
+          cp -r config/* ~/hammer-bench/config/
+
+          # Clone mathlib4 (minimal clone for faster setup)
+          git clone --depth 1 https://github.com/leanprover-community/mathlib4.git ~/hammer-bench/mathlib4
+
+      - name: Run self-test (dry run)
+        run: |
+          cd ~/hammer-bench
+          python3 -m scripts selftest --dry-run
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+      # Uncomment to run actual tests (takes longer)
+      # - name: Run self-test
+      #   run: |
+      #     cd ~/hammer-bench
+      #     python3 -m scripts selftest
+      #   env:
+      #     PYTHONPATH: ${{ github.workspace }}
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Check Python syntax
+        run: python3 -m py_compile scripts/*.py
+
+      - name: Verify config files parse
+        run: |
+          python3 -c "import yaml; yaml.safe_load(open('config/presets.yaml'))"
+          python3 -c "import yaml; yaml.safe_load(open('config/providers.yaml'))"
+          python3 -c "import yaml; yaml.safe_load(open('config/targets.yaml'))"

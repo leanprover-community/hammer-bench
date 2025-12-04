@@ -1,10 +1,20 @@
 # Hammer benchmarking queue
-# Add one preset per line, optionally with :provider suffix
-# Example:
-#   grind_only
-#   grind_suggestions_only:sineQuaNon
+#
+# Source directive (optional) - specifies which repo/ref to use:
+#   #source: owner/repo@ref
+#   Example: #source: leanprover-community/mathlib4-nightly-testing@hammer_measurements
+#
+# Queue entries - one preset per line, with optional modifiers:
+#   preset_name
+#   preset_name@targets
+#   preset_name:provider
+#   preset_name/fraction
+#   preset_name@targets:provider/fraction
 #
 # Completed runs are marked with #done:TIMESTAMP:
-# Example:
 #   #done:2025-12-04T10-30-00: grind_only
-grind_only
+
+# Example with source:
+# #source: leanprover-community/mathlib4-nightly-testing@hammer_measurements
+# grind@quick_test
+# omega@quick_test

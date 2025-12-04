@@ -15,12 +15,15 @@ from .core import (
     get_git_ref,
     get_lean_toolchain,
     Message,
+    SourceSpec,
 )
 from .runner import (
+    checkout_source,
     execute_run,
     get_run_config,
     load_presets,
     parse_queue_entry,
+    parse_queue_file,
 )
 
 
@@ -136,28 +139,27 @@ def cmd_run(args) -> int:
         print("Queue is empty")
         return 0
 
-    # Read queue and find next pending entry
+    # Parse queue file (extracts source directive and entries)
+    source, entries = parse_queue_file(queue_file)
     lines = queue_file.read_text().splitlines()
-    pending_entries = []
-    pending_indices = []
 
-    for i, line in enumerate(lines):
-        line_stripped = line.strip()
-        if not line_stripped or line_stripped.startswith("#"):
-            continue
-        pending_entries.append(line_stripped)
-        pending_indices.append(i)
-
-    if not pending_entries:
+    if not entries:
         print("No pending runs in queue")
         return 0
 
+    # Checkout source if specified
+    if source:
+        print(f"Source specified: {source}")
+        try:
+            checkout_source(source)
+        except Exception as e:
+            print(f"Error checking out source: {e}", file=sys.stderr)
+            return 1
+        print()
+
     # Process entries
     processed = 0
-    while pending_entries:
-        entry = pending_entries.pop(0)
-        idx = pending_indices.pop(0)
-
+    for idx, entry in entries:
         print(f"\n{'='*60}")
         print(f"Processing queue entry: {entry}")
         print(f"{'='*60}\n")
@@ -172,7 +174,7 @@ def cmd_run(args) -> int:
 
         # Execute the run
         try:
-            metadata = execute_run(config, dry_run=args.dry_run)
+            metadata = execute_run(config, dry_run=args.dry_run, source=source)
         except Exception as e:
             print(f"Error executing run: {e}", file=sys.stderr)
             import traceback
@@ -504,3 +506,162 @@ def cmd_cleanup(args) -> int:
     """Clean up old runs."""
     print(f"Cleanup command not yet implemented (would remove runs older than {args.days} days)")
     return 1
+
+
+# Self-test configuration
+# TODO: Update this once upstream changes are merged
+SELFTEST_SOURCE = "leanprover-community/mathlib4-nightly-testing@hammer_measurements"
+SELFTEST_TESTS = [
+    # (preset, targets, description)
+    ("omega", "quick_test", "omega on Logic.Basic"),
+    ("decide", "quick_test", "decide on Logic.Basic"),
+]
+
+
+def cmd_selftest(args) -> int:
+    """Run self-tests to verify hammer-bench is working correctly.
+
+    This runs a few small tests on a fixed commit and compares the output
+    with expected results. Used for CI validation.
+    """
+    import tempfile
+    import shutil
+
+    hammer_dir = get_hammer_bench_dir()
+    mathlib_dir = get_mathlib_dir()
+    expected_dir = hammer_dir / "tests" / "expected"
+
+    print("=" * 60)
+    print("hammer-bench self-test")
+    print("=" * 60)
+    print()
+
+    # Check if mathlib4 is initialized
+    if not mathlib_dir.exists():
+        print("Error: mathlib4 not initialized. Run 'hammer-bench init' first.", file=sys.stderr)
+        return 1
+
+    # Parse the source spec
+    source = SourceSpec.parse(SELFTEST_SOURCE)
+    print(f"Test source: {source}")
+    print()
+
+    # Checkout the test source
+    print("Checking out test source...")
+    try:
+        checkout_source(source)
+    except Exception as e:
+        print(f"Error checking out source: {e}", file=sys.stderr)
+        return 1
+    print()
+
+    # Create a temporary runs directory for the tests
+    with tempfile.TemporaryDirectory(prefix="hammer-bench-selftest-") as temp_runs_dir:
+        temp_runs_path = Path(temp_runs_dir)
+        print(f"Using temporary runs directory: {temp_runs_path}")
+        print()
+
+        # Run each test
+        all_passed = True
+        results = []
+
+        for preset, targets, description in SELFTEST_TESTS:
+            print(f"\n{'='*60}")
+            print(f"Test: {description}")
+            print(f"  Preset: {preset}, Targets: {targets}")
+            print(f"{'='*60}\n")
+
+            try:
+                config = get_run_config(preset, None, None, targets)
+                # Override timeout for quick tests
+                config.build_timeout_hours = 0.5  # 30 minutes max
+
+                # Execute the run
+                metadata = execute_run(config, dry_run=args.dry_run, source=source)
+
+                if args.dry_run:
+                    results.append((description, "SKIP", "dry run"))
+                    continue
+
+                if metadata is None:
+                    results.append((description, "FAIL", "run returned None"))
+                    all_passed = False
+                    continue
+
+                if metadata.status != "completed":
+                    results.append((description, "FAIL", f"status={metadata.status}"))
+                    all_passed = False
+                    continue
+
+                # Check expected output if it exists
+                test_name = f"{preset}_{targets}"
+                expected_file = expected_dir / f"{test_name}.jsonl"
+
+                if expected_file.exists():
+                    # Load expected messages
+                    expected_messages = set()
+                    with open(expected_file) as f:
+                        for line in f:
+                            msg = json.loads(line)
+                            # Key by location + replacement (ignore timing)
+                            key = (msg["file"], msg["row"], msg["col"], msg["replacement"])
+                            expected_messages.add(key)
+
+                    # Load actual messages
+                    actual_messages = set()
+                    run_dir = get_runs_dir() / metadata.run_id
+                    with open(run_dir / "messages.jsonl") as f:
+                        for line in f:
+                            msg = json.loads(line)
+                            key = (msg["file"], msg["row"], msg["col"], msg["replacement"])
+                            actual_messages.add(key)
+
+                    # Compare
+                    missing = expected_messages - actual_messages
+                    extra = actual_messages - expected_messages
+
+                    if missing or extra:
+                        results.append((description, "FAIL",
+                            f"output mismatch: {len(missing)} missing, {len(extra)} extra"))
+                        all_passed = False
+                        if missing:
+                            print(f"  Missing messages (expected but not found):")
+                            for m in list(missing)[:3]:
+                                print(f"    {m}")
+                        if extra:
+                            print(f"  Extra messages (found but not expected):")
+                            for m in list(extra)[:3]:
+                                print(f"    {m}")
+                    else:
+                        results.append((description, "PASS",
+                            f"{len(actual_messages)} messages match"))
+                else:
+                    # No expected file - just report count
+                    results.append((description, "PASS",
+                        f"{metadata.message_count} messages (no expected file)"))
+                    if not args.dry_run:
+                        print(f"  Note: No expected output file at {expected_file}")
+                        print(f"  To create one, copy the messages.jsonl from this run")
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                results.append((description, "FAIL", str(e)))
+                all_passed = False
+
+        # Print summary
+        print()
+        print("=" * 60)
+        print("Self-test results:")
+        print("=" * 60)
+        for description, status, detail in results:
+            icon = "✓" if status == "PASS" else ("○" if status == "SKIP" else "✗")
+            print(f"  {icon} {description}: {status} ({detail})")
+
+        print()
+        if all_passed:
+            print("All tests passed!")
+            return 0
+        else:
+            print("Some tests failed!")
+            return 1

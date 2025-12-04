@@ -22,6 +22,7 @@ from .core import (
     Message,
     RunConfig,
     RunMetadata,
+    SourceSpec,
     SuggestionProvider,
     atomic_write_json,
     generate_run_id,
@@ -62,6 +63,84 @@ def load_targets() -> dict:
         with open(targets_file) as f:
             return yaml.safe_load(f) or {}
     return {}
+
+
+def checkout_source(source: SourceSpec, mathlib_dir: Optional[Path] = None) -> None:
+    """Checkout a specific source (repo + ref) in the mathlib directory.
+
+    Args:
+        source: The source specification (repo + ref)
+        mathlib_dir: Path to mathlib directory (defaults to get_mathlib_dir())
+    """
+    if mathlib_dir is None:
+        mathlib_dir = get_mathlib_dir()
+
+    if not mathlib_dir.exists():
+        raise FileNotFoundError(f"mathlib4 directory not found at {mathlib_dir}")
+
+    # Add remote if needed (use repo name as remote name)
+    remote_name = source.repo.replace("/", "_")
+    result = subprocess.run(
+        ["git", "remote", "get-url", remote_name],
+        cwd=mathlib_dir,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        print(f"Adding remote {remote_name} -> {source.github_url}")
+        subprocess.run(
+            ["git", "remote", "add", remote_name, source.github_url],
+            cwd=mathlib_dir,
+            check=True,
+        )
+
+    # Fetch the ref
+    print(f"Fetching {source.ref} from {remote_name}...")
+    subprocess.run(
+        ["git", "fetch", remote_name, source.ref],
+        cwd=mathlib_dir,
+        check=True,
+    )
+
+    # Checkout the ref
+    print(f"Checking out {remote_name}/{source.ref}...")
+    # Use FETCH_HEAD since we just fetched the specific ref
+    subprocess.run(
+        ["git", "checkout", "FETCH_HEAD", "--detach"],
+        cwd=mathlib_dir,
+        check=True,
+    )
+
+    print(f"Checked out {source} at {get_git_commit(mathlib_dir)[:12]}")
+
+
+def parse_queue_file(queue_file: Path) -> tuple:
+    """Parse a queue file, extracting source directive and entries.
+
+    Returns:
+        (source: Optional[SourceSpec], entries: list of (line_idx, entry_str))
+    """
+    if not queue_file.exists():
+        return None, []
+
+    lines = queue_file.read_text().splitlines()
+    source = None
+    entries = []
+
+    for i, line in enumerate(lines):
+        line_stripped = line.strip()
+        if not line_stripped:
+            continue
+        if line_stripped.startswith("#source:"):
+            # Parse source directive
+            source_str = line_stripped[len("#source:"):].strip()
+            source = SourceSpec.parse(source_str)
+        elif line_stripped.startswith("#done:") or line_stripped.startswith("#"):
+            # Skip comments and done entries
+            continue
+        else:
+            entries.append((i, line_stripped))
+
+    return source, entries
 
 
 def parse_queue_entry(entry: str) -> tuple:
@@ -299,12 +378,14 @@ def unpatch_suggestion_provider(mathlib_dir: Path) -> None:
     init_file.write_text("\n".join(new_lines))
 
 
-def execute_run(config: RunConfig, dry_run: bool = False) -> Optional[RunMetadata]:
+def execute_run(config: RunConfig, dry_run: bool = False,
+                source: Optional[SourceSpec] = None) -> Optional[RunMetadata]:
     """Execute a single benchmark run.
 
     Args:
         config: Run configuration
         dry_run: If True, just print what would be done
+        source: Optional source specification (recorded in metadata)
 
     Returns:
         RunMetadata for the completed run, or None on failure
@@ -326,6 +407,8 @@ def execute_run(config: RunConfig, dry_run: bool = False) -> Optional[RunMetadat
 
     print(f"Run ID: {run_id}")
     print(f"Preset: {config.preset_name}")
+    if source:
+        print(f"Source: {source}")
     if config.target_collection != "all":
         print(f"Targets: {config.target_collection} ({len(config.targets)} module(s))")
     print(f"Provider: {config.suggestion_provider.name if config.suggestion_provider else 'default'}")
@@ -351,6 +434,7 @@ def execute_run(config: RunConfig, dry_run: bool = False) -> Optional[RunMetadat
         duration_seconds=None,
         config=config,
         status="running",
+        source=source,
     )
 
     # Save initial metadata
