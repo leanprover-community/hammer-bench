@@ -1,0 +1,37 @@
+{
+  "grind_only": {
+    "linters": {"tryAtEachStepGrind": true},
+    "fraction": 1,
+    "timing_mode": true,
+    "build_timeout_hours": 6,
+    "description": "Run grind at every proof step"
+  },
+  "simp_all_only": {
+    "linters": {"tryAtEachStepSimpAll": true},
+    "fraction": 1,
+    "timing_mode": true,
+    "build_timeout_hours": 6,
+    "description": "Run simp_all at every proof step"
+  },
+  "aesop_only": {
+    "linters": {"tryAtEachStepAesop": true},
+    "fraction": 1,
+    "timing_mode": true,
+    "build_timeout_hours": 12,
+    "description": "Run aesop at every proof step"
+  },
+  "grind_f100": {
+    "linters": {"tryAtEachStepGrind": true},
+    "fraction": 100,
+    "timing_mode": true,
+    "build_timeout_hours": 2,
+    "description": "Run grind at 1% of proof steps (quick test)"
+  },
+  "coverage_grind_simp": {
+    "linters": {"tryAtEachStepGrind": true, "tryAtEachStepSimpAll": true},
+    "fraction": 1,
+    "timing_mode": false,
+    "build_timeout_hours": 8,
+    "description": "Compare grind vs simp_all coverage"
+  }
+}
