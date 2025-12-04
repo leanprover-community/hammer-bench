@@ -89,13 +89,67 @@ The message format `(NNNms)` is easily parseable by the benchmarking tool.
 +            logInfoAt i.tacI.stx m!"`{i.tacI.stx}` can be replaced with `{tac}` ({elapsedMs}ms)"
 ```
 
+### 2. Generic Tactic Parser and Environment Variable Entry Point
+
+**File:** `Mathlib/Tactic/TacticAnalysis/Declarations.lean`
+
+**Change:** Add generic functions that allow testing arbitrary tactics without
+modifying Mathlib code.
+
+**New definitions:**
+
+```lean
+/-- Parse a string into tactic syntax. -/
+def Mathlib.TacticAnalysis.parseTacticString (env : Environment) (tacticStr : String) :
+    Except String (TSyntax `tactic)
+
+/-- Run a tactic (given as a string) at each proof step, with timing.
+
+`label` is the human-readable name shown in output (e.g., "grind").
+`tacticStr` is the tactic syntax as a string (e.g., "grind +suggestions").
+-/
+def Mathlib.TacticAnalysis.tryAtEachStepFromStrings
+    (label : String) (tacticStr : String) : TacticAnalysis.Config
+
+/-- Run a custom tactic at each proof step, configured via environment variables.
+
+Reads from environment variables:
+- `TRY_AT_EACH_STEP_LABEL`: Human-readable label for output (e.g., "grind")
+- `TRY_AT_EACH_STEP_TACTIC`: Tactic syntax to try (e.g., "grind +suggestions")
+
+If either variable is missing, this linter does nothing.
+-/
+def Mathlib.TacticAnalysis.tryAtEachStepFromEnvImpl : TacticAnalysis.Config
+
+/-- Registered linter option for the env-based entry point. -/
+register_option linter.tacticAnalysis.tryAtEachStepFromEnv : Bool := {
+  defValue := false
+}
+```
+
+**Rationale:** This allows testing arbitrary tactics (including custom ones or
+experimental syntax) without modifying Mathlib code. Users can simply set
+environment variables and enable the linter:
+
+```bash
+TRY_AT_EACH_STEP_LABEL="omega" \
+TRY_AT_EACH_STEP_TACTIC="omega" \
+lake build Mathlib -Klinter.tacticAnalysis.tryAtEachStepFromEnv=true
+```
+
+This is particularly useful for:
+- Testing new tactics before adding dedicated linter options
+- A/B comparisons between tactic variants (e.g., `grind` vs `grind +suggestions`)
+- Custom tactics from downstream libraries
+- CI pipelines that want to test multiple tactics without code changes
+
 ## Non-Required Changes
 
 These changes are **NOT** needed in Mathlib master. The benchmarking tool
 handles them via runtime patching:
 
-- Enabling/disabling specific linters (patched in lakefile.lean)
-- Setting the sampling fraction (patched in lakefile.lean)
+- Enabling/disabling specific linters (via `lake build -K` flags)
+- Setting the sampling fraction (via `lake build -K` flags)
 - Configuring suggestion providers (patched in Mathlib/Init.lean)
 
 ## Testing the Changes
@@ -111,6 +165,16 @@ lake build Mathlib.Logic.Basic \
 # Should see output like:
 # info: Mathlib/Logic/Basic.lean:47:55: `rfl` can be replaced with `grind` (2ms)
 # info: Mathlib/Logic/Basic.lean:51:12: `cases h₁` can be replaced with `grind` (3ms)
+
+# Test the environment variable-based linter
+TRY_AT_EACH_STEP_LABEL="omega" \
+TRY_AT_EACH_STEP_TACTIC="omega" \
+lake build Mathlib.Logic.Basic \
+  -Klinter.tacticAnalysis.tryAtEachStepFromEnv=true \
+  2>&1 | grep "can be replaced with" | head -5
+
+# Should see output like:
+# info: Mathlib/Logic/Basic.lean:47:55: `rfl` can be replaced with `omega` (1ms)
 ```
 
 ## Compatibility

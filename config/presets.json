@@ -33,5 +33,29 @@
     "timing_mode": false,
     "build_timeout_hours": 8,
     "description": "Compare grind vs simp_all coverage"
+  },
+  "omega_custom": {
+    "customTactic": "omega",
+    "customTacticLabel": "omega",
+    "fraction": 1,
+    "timing_mode": true,
+    "build_timeout_hours": 6,
+    "description": "Run omega at every proof step (using env var linter)"
+  },
+  "decide_custom": {
+    "customTactic": "decide",
+    "customTacticLabel": "decide",
+    "fraction": 1,
+    "timing_mode": true,
+    "build_timeout_hours": 4,
+    "description": "Run decide at every proof step (using env var linter)"
+  },
+  "grind_ext_custom": {
+    "customTactic": "grind +ematch +split",
+    "customTacticLabel": "grind_ext",
+    "fraction": 1,
+    "timing_mode": true,
+    "build_timeout_hours": 8,
+    "description": "Run grind with extended options (using env var linter)"
   }
 }

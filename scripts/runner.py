@@ -106,6 +106,10 @@ def get_run_config(preset_name: str, provider_name: Optional[str] = None) -> Run
     linters = LinterConfig.from_dict(preset.get("linters", {}))
     if "fraction" in preset:
         linters.fraction = preset["fraction"]
+    # Support custom tactic in preset
+    if "customTactic" in preset:
+        linters.customTactic = preset["customTactic"]
+        linters.customTacticLabel = preset.get("customTacticLabel", preset["customTactic"])
 
     provider = None
     if provider_name:
@@ -126,7 +130,7 @@ def get_run_config(preset_name: str, provider_name: Optional[str] = None) -> Run
     )
 
 
-def build_lake_command(config: RunConfig, target: str = "Mathlib") -> list:
+def build_lake_command(config: RunConfig, target: str = "Mathlib") -> tuple:
     """Build the lake command with appropriate -K flags.
 
     Args:
@@ -134,9 +138,10 @@ def build_lake_command(config: RunConfig, target: str = "Mathlib") -> list:
         target: Build target (default: Mathlib)
 
     Returns:
-        List of command arguments
+        Tuple of (command arguments list, environment variables dict)
     """
     cmd = ["lake", "build", target]
+    env_vars = {}
 
     # Add linter flags
     linters = config.linters
@@ -151,11 +156,17 @@ def build_lake_command(config: RunConfig, target: str = "Mathlib") -> list:
     if linters.tryAtEachStepSimpAllSuggestions:
         cmd.append("-Klinter.tacticAnalysis.tryAtEachStepSimpAllSuggestions=true")
 
+    # Handle custom tactic via environment variables
+    if linters.customTactic:
+        cmd.append("-Klinter.tacticAnalysis.tryAtEachStepFromEnv=true")
+        env_vars["TRY_AT_EACH_STEP_TACTIC"] = linters.customTactic
+        env_vars["TRY_AT_EACH_STEP_LABEL"] = linters.customTacticLabel or linters.customTactic
+
     # Add fraction if not 1
     if linters.fraction != 1:
         cmd.append(f"-Klinter.tacticAnalysis.tryAtEachStep.fraction={linters.fraction}")
 
-    return cmd
+    return cmd, env_vars
 
 
 def patch_suggestion_provider(mathlib_dir: Path, provider: Optional[SuggestionProvider]) -> Optional[Path]:
@@ -263,13 +274,15 @@ def execute_run(config: RunConfig, dry_run: bool = False) -> Optional[RunMetadat
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # Build command
-    cmd = build_lake_command(config)
+    cmd, env_vars = build_lake_command(config)
     timeout_seconds = int(config.build_timeout_hours * 3600)
 
     print(f"Run ID: {run_id}")
     print(f"Preset: {config.preset_name}")
     print(f"Provider: {config.suggestion_provider.name if config.suggestion_provider else 'default'}")
     print(f"Command: {' '.join(cmd)}")
+    if env_vars:
+        print(f"Environment: {env_vars}")
     print(f"Timeout: {config.build_timeout_hours}h ({timeout_seconds}s)")
     print()
 
@@ -313,6 +326,10 @@ def execute_run(config: RunConfig, dry_run: bool = False) -> Optional[RunMetadat
         print(f"Running lake build (timeout: {config.build_timeout_hours}h)...")
         start_time = time.time()
 
+        # Merge environment variables with current environment
+        run_env = os.environ.copy()
+        run_env.update(env_vars)
+
         try:
             result = subprocess.run(
                 cmd,
@@ -320,6 +337,7 @@ def execute_run(config: RunConfig, dry_run: bool = False) -> Optional[RunMetadat
                 capture_output=True,
                 text=True,
                 timeout=timeout_seconds,
+                env=run_env,
             )
             timed_out = False
         except subprocess.TimeoutExpired as e:

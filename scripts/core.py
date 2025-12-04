@@ -12,16 +12,23 @@ import subprocess
 
 @dataclass
 class LinterConfig:
-    """Configuration for which linters to enable."""
+    """Configuration for which linters to enable.
+
+    For built-in linters, set the corresponding bool flags.
+    For custom tactics via environment variables, set customTacticLabel and customTactic.
+    """
     tryAtEachStepGrind: bool = False
     tryAtEachStepSimpAll: bool = False
     tryAtEachStepAesop: bool = False
     tryAtEachStepGrindSuggestions: bool = False
     tryAtEachStepSimpAllSuggestions: bool = False
+    # Custom tactic via TRY_AT_EACH_STEP_LABEL and TRY_AT_EACH_STEP_TACTIC env vars
+    customTacticLabel: Optional[str] = None
+    customTactic: Optional[str] = None
     fraction: int = 1
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "tryAtEachStepGrind": self.tryAtEachStepGrind,
             "tryAtEachStepSimpAll": self.tryAtEachStepSimpAll,
             "tryAtEachStepAesop": self.tryAtEachStepAesop,
@@ -29,6 +36,11 @@ class LinterConfig:
             "tryAtEachStepSimpAllSuggestions": self.tryAtEachStepSimpAllSuggestions,
             "fraction": self.fraction,
         }
+        if self.customTacticLabel:
+            d["customTacticLabel"] = self.customTacticLabel
+        if self.customTactic:
+            d["customTactic"] = self.customTactic
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "LinterConfig":
@@ -38,6 +50,8 @@ class LinterConfig:
             tryAtEachStepAesop=d.get("tryAtEachStepAesop", False),
             tryAtEachStepGrindSuggestions=d.get("tryAtEachStepGrindSuggestions", False),
             tryAtEachStepSimpAllSuggestions=d.get("tryAtEachStepSimpAllSuggestions", False),
+            customTacticLabel=d.get("customTacticLabel"),
+            customTactic=d.get("customTactic"),
             fraction=d.get("fraction", 1),
         )
 
