@@ -114,10 +114,10 @@ def Mathlib.TacticAnalysis.tryAtEachStepFromStrings
 /-- Run a custom tactic at each proof step, configured via environment variables.
 
 Reads from environment variables:
-- `TRY_AT_EACH_STEP_LABEL`: Human-readable label for output (e.g., "grind")
-- `TRY_AT_EACH_STEP_TACTIC`: Tactic syntax to try (e.g., "grind +suggestions")
+- `TRY_AT_EACH_STEP_TACTIC`: Tactic syntax to try (e.g., "grind +suggestions") - required
+- `TRY_AT_EACH_STEP_LABEL`: Human-readable label for output (optional, defaults to tactic)
 
-If either variable is missing, this linter does nothing.
+If `TRY_AT_EACH_STEP_TACTIC` is missing, this linter does nothing.
 -/
 def Mathlib.TacticAnalysis.tryAtEachStepFromEnvImpl : TacticAnalysis.Config
 
@@ -132,7 +132,6 @@ experimental syntax) without modifying Mathlib code. Users can simply set
 environment variables and enable the linter:
 
 ```bash
-TRY_AT_EACH_STEP_LABEL="omega" \
 TRY_AT_EACH_STEP_TACTIC="omega" \
 lake build Mathlib -Klinter.tacticAnalysis.tryAtEachStepFromEnv=true
 ```
@@ -167,7 +166,6 @@ lake build Mathlib.Logic.Basic \
 # info: Mathlib/Logic/Basic.lean:51:12: `cases h₁` can be replaced with `grind` (3ms)
 
 # Test the environment variable-based linter
-TRY_AT_EACH_STEP_LABEL="omega" \
 TRY_AT_EACH_STEP_TACTIC="omega" \
 lake build Mathlib.Logic.Basic \
   -Klinter.tacticAnalysis.tryAtEachStepFromEnv=true \
@@ -175,6 +173,13 @@ lake build Mathlib.Logic.Basic \
 
 # Should see output like:
 # info: Mathlib/Logic/Basic.lean:47:55: `rfl` can be replaced with `omega` (1ms)
+
+# With a custom label:
+TRY_AT_EACH_STEP_TACTIC="grind +suggestions" \
+TRY_AT_EACH_STEP_LABEL="grind_ext" \
+lake build Mathlib.Logic.Basic \
+  -Klinter.tacticAnalysis.tryAtEachStepFromEnv=true \
+  2>&1 | grep "can be replaced with" | head -5
 ```
 
 ## Compatibility

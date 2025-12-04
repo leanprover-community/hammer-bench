@@ -82,20 +82,39 @@ def load_providers() -> dict:
 
 
 def parse_queue_entry(entry: str) -> tuple:
-    """Parse a queue entry like 'preset_name' or 'preset_name:provider'.
+    """Parse a queue entry like 'preset_name', 'preset_name:provider', or 'preset_name/fraction'.
+
+    Supported formats:
+        preset_name
+        preset_name/fraction
+        preset_name:provider
+        preset_name:provider/fraction
 
     Returns:
-        (preset_name, provider_name or None)
+        (preset_name, provider_name or None, fraction or None)
     """
     entry = entry.strip()
+    fraction = None
+
+    # Check for fraction suffix first
+    if "/" in entry:
+        entry, fraction_str = entry.rsplit("/", 1)
+        try:
+            fraction = int(fraction_str.strip())
+        except ValueError:
+            raise ValueError(f"Invalid fraction '{fraction_str}' - must be an integer")
+
+    # Now check for provider
     if ":" in entry:
         preset, provider = entry.split(":", 1)
-        return preset.strip(), provider.strip()
-    return entry, None
+        return preset.strip(), provider.strip(), fraction
+
+    return entry, None, fraction
 
 
-def get_run_config(preset_name: str, provider_name: Optional[str] = None) -> RunConfig:
-    """Get a RunConfig from preset and optional provider names."""
+def get_run_config(preset_name: str, provider_name: Optional[str] = None,
+                   fraction_override: Optional[int] = None) -> RunConfig:
+    """Get a RunConfig from preset and optional provider/fraction overrides."""
     presets = load_presets()
     providers = load_providers()
 
@@ -106,6 +125,9 @@ def get_run_config(preset_name: str, provider_name: Optional[str] = None) -> Run
     linters = LinterConfig.from_dict(preset.get("linters", {}))
     if "fraction" in preset:
         linters.fraction = preset["fraction"]
+    # Apply fraction override from queue entry
+    if fraction_override is not None:
+        linters.fraction = fraction_override
     # Support custom tactic in preset
     if "customTactic" in preset:
         linters.customTactic = preset["customTactic"]
