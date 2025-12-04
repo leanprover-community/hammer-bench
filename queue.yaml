@@ -1,0 +1,27 @@
+# Hammer benchmarking queue
+#
+# source: Which repository and ref to use
+#   - Short name (from repos.yaml): mathlib4@master
+#   - Full path: leanprover-community/mathlib4@master
+#
+# queue: List of benchmark runs to execute
+#   - String shorthand: "preset@targets:provider/fraction"
+#   - Or explicit fields:
+#       preset: grind
+#       targets: quick_test
+#       provider: sineQuaNon
+#       fraction: 100
+#
+# completed: Finished runs (managed automatically)
+
+source: null  # Set to e.g. "mathlib4@master" or "leanprover-community/mathlib4@v4.14.0"
+
+queue: []
+  # Examples:
+  # - grind@quick_test
+  # - omega@quick_test/100
+  # - preset: simp_all
+  #   targets: logic
+  #   provider: sineQuaNon
+
+completed: []

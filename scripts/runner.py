@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -115,11 +116,8 @@ def checkout_source(source: SourceSpec, repo_dir: Optional[Path] = None) -> Path
     # Ensure worktrees directory exists
     get_worktrees_dir().mkdir(parents=True, exist_ok=True)
 
-    # Get the URL
-    if repo_config:
-        url = repo_config.url
-    else:
-        url = source.github_url(repos)
+    # Get the URL (will error if short name not in repos.yaml)
+    url = source.resolve_url(repos)
 
     if not repo_dir.exists():
         # Clone the repository
@@ -164,34 +162,86 @@ def checkout_source(source: SourceSpec, repo_dir: Optional[Path] = None) -> Path
     return repo_dir
 
 
-def parse_queue_file(queue_file: Path) -> tuple:
-    """Parse a queue file, extracting source directive and entries.
+@dataclass
+class QueueEntry:
+    """A parsed queue entry."""
+    preset: str
+    targets: Optional[str] = None
+    provider: Optional[str] = None
+    fraction: Optional[int] = None
+
+    @classmethod
+    def parse(cls, entry) -> "QueueEntry":
+        """Parse a queue entry from string or dict format."""
+        if isinstance(entry, str):
+            # Parse string shorthand: "preset@targets:provider/fraction"
+            preset, provider, fraction, targets = parse_queue_entry(entry)
+            return cls(preset=preset, targets=targets, provider=provider, fraction=fraction)
+        elif isinstance(entry, dict):
+            # Parse explicit dict format
+            return cls(
+                preset=entry["preset"],
+                targets=entry.get("targets"),
+                provider=entry.get("provider"),
+                fraction=entry.get("fraction"),
+            )
+        else:
+            raise ValueError(f"Invalid queue entry format: {entry}")
+
+
+@dataclass
+class QueueFile:
+    """Parsed queue file."""
+    source: Optional[SourceSpec]
+    entries: list  # List of QueueEntry
+    completed: list  # List of completed run records
+    path: Path
+
+    def save(self) -> None:
+        """Save the queue file back to disk."""
+        data = {
+            "source": str(self.source) if self.source else None,
+            "queue": [
+                e.preset if not (e.targets or e.provider or e.fraction) else {
+                    "preset": e.preset,
+                    **({"targets": e.targets} if e.targets else {}),
+                    **({"provider": e.provider} if e.provider else {}),
+                    **({"fraction": e.fraction} if e.fraction else {}),
+                }
+                for e in self.entries
+            ],
+            "completed": self.completed,
+        }
+        with open(self.path, "w") as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
+
+def parse_queue_file(queue_file: Path) -> QueueFile:
+    """Parse a YAML queue file.
 
     Returns:
-        (source: Optional[SourceSpec], entries: list of (line_idx, entry_str))
+        QueueFile with source, entries, and completed runs
     """
     if not queue_file.exists():
-        return None, []
+        return QueueFile(source=None, entries=[], completed=[], path=queue_file)
 
-    lines = queue_file.read_text().splitlines()
+    with open(queue_file) as f:
+        data = yaml.safe_load(f) or {}
+
+    # Parse source
     source = None
+    if data.get("source"):
+        source = SourceSpec.parse(data["source"])
+
+    # Parse queue entries
     entries = []
+    for entry in data.get("queue", []):
+        entries.append(QueueEntry.parse(entry))
 
-    for i, line in enumerate(lines):
-        line_stripped = line.strip()
-        if not line_stripped:
-            continue
-        if line_stripped.startswith("#source:"):
-            # Parse source directive
-            source_str = line_stripped[len("#source:"):].strip()
-            source = SourceSpec.parse(source_str)
-        elif line_stripped.startswith("#done:") or line_stripped.startswith("#"):
-            # Skip comments and done entries
-            continue
-        else:
-            entries.append((i, line_stripped))
+    # Keep completed as-is
+    completed = data.get("completed", [])
 
-    return source, entries
+    return QueueFile(source=source, entries=entries, completed=completed, path=queue_file)
 
 
 def parse_queue_entry(entry: str) -> tuple:

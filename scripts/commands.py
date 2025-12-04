@@ -24,8 +24,9 @@ from .runner import (
     execute_run,
     get_run_config,
     load_presets,
-    parse_queue_entry,
     parse_queue_file,
+    QueueEntry,
+    QueueFile,
 )
 
 
@@ -82,80 +83,67 @@ def cmd_init(args) -> int:
 
 def cmd_queue(args) -> int:
     """Manage the run queue."""
-    queue_file = get_hammer_bench_dir() / "queue.txt"
+    queue_path = get_hammer_bench_dir() / "queue.yaml"
+    queue = parse_queue_file(queue_path)
 
     if args.queue_command == "add":
         # Add a run to the queue
-        preset = args.preset
-        with open(queue_file, "a") as f:
-            f.write(f"{preset}\n")
-        print(f"Added '{preset}' to queue")
+        entry = QueueEntry.parse(args.preset)
+        queue.entries.append(entry)
+        queue.save()
+        print(f"Added '{args.preset}' to queue")
         return 0
 
     elif args.queue_command == "clear":
         # Clear pending runs (keep completed ones)
-        if not queue_file.exists():
-            print("Queue is already empty")
-            return 0
-
-        lines = queue_file.read_text().splitlines()
-        kept = [line for line in lines if line.startswith("#")]
-        queue_file.write_text("\n".join(kept) + "\n" if kept else "")
-        print(f"Cleared {len(lines) - len(kept)} pending runs")
+        count = len(queue.entries)
+        queue.entries = []
+        queue.save()
+        print(f"Cleared {count} pending runs")
         return 0
 
     else:
         # Default: list queue
-        if not queue_file.exists():
-            print("Queue is empty")
-            return 0
+        if queue.source:
+            print(f"Source: {queue.source}")
+            print()
 
-        lines = queue_file.read_text().splitlines()
-        pending = []
-        completed = []
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith("#done:"):
-                completed.append(line)
-            elif not line.startswith("#"):
-                pending.append(line)
+        print(f"Pending: {len(queue.entries)}")
+        for entry in queue.entries:
+            desc = entry.preset
+            if entry.targets:
+                desc += f"@{entry.targets}"
+            if entry.provider:
+                desc += f":{entry.provider}"
+            if entry.fraction:
+                desc += f"/{entry.fraction}"
+            print(f"  - {desc}")
 
-        print(f"Pending: {len(pending)}")
-        for p in pending:
-            print(f"  - {p}")
-        print(f"Completed: {len(completed)}")
+        print(f"Completed: {len(queue.completed)}")
         return 0
 
 
 def cmd_run(args) -> int:
     """Execute benchmark runs from the queue."""
     hammer_dir = get_hammer_bench_dir()
-    queue_file = hammer_dir / "queue.txt"
-    mathlib_dir = get_mathlib_dir()
+    queue_path = hammer_dir / "queue.yaml"
 
-    if not mathlib_dir.exists():
-        print("Error: mathlib4 not initialized. Run 'hammer-bench init' first.", file=sys.stderr)
-        return 1
-
-    if not queue_file.exists():
-        print("Queue is empty")
+    if not queue_path.exists():
+        print("Queue file not found. Create queue.yaml first.")
         return 0
 
-    # Parse queue file (extracts source directive and entries)
-    source, entries = parse_queue_file(queue_file)
-    lines = queue_file.read_text().splitlines()
+    # Parse queue file
+    queue = parse_queue_file(queue_path)
 
-    if not entries:
+    if not queue.entries:
         print("No pending runs in queue")
         return 0
 
     # Checkout source if specified
-    if source:
-        print(f"Source specified: {source}")
+    if queue.source:
+        print(f"Source: {queue.source}")
         try:
-            checkout_source(source)
+            checkout_source(queue.source)
         except Exception as e:
             print(f"Error checking out source: {e}", file=sys.stderr)
             return 1
@@ -163,34 +151,49 @@ def cmd_run(args) -> int:
 
     # Process entries
     processed = 0
-    for idx, entry in entries:
+    while queue.entries:
+        entry = queue.entries[0]
+
         print(f"\n{'='*60}")
-        print(f"Processing queue entry: {entry}")
+        print(f"Processing: {entry.preset}" +
+              (f"@{entry.targets}" if entry.targets else "") +
+              (f":{entry.provider}" if entry.provider else "") +
+              (f"/{entry.fraction}" if entry.fraction else ""))
         print(f"{'='*60}\n")
 
-        # Parse the entry
+        # Build config
         try:
-            preset_name, provider_name, fraction, targets = parse_queue_entry(entry)
-            config = get_run_config(preset_name, provider_name, fraction, targets)
+            config = get_run_config(entry.preset, entry.provider, entry.fraction, entry.targets)
         except ValueError as e:
-            print(f"Error parsing queue entry '{entry}': {e}", file=sys.stderr)
+            print(f"Error: {e}", file=sys.stderr)
+            queue.entries.pop(0)
             continue
 
         # Execute the run
         try:
-            metadata = execute_run(config, dry_run=args.dry_run, source=source)
+            metadata = execute_run(config, dry_run=args.dry_run, source=queue.source)
         except Exception as e:
             print(f"Error executing run: {e}", file=sys.stderr)
             import traceback
             traceback.print_exc()
+            queue.entries.pop(0)
             continue
 
-        # Mark as done in queue
+        # Mark as done
         if not args.dry_run and metadata:
-            timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-            lines[idx] = f"#done:{timestamp}: {entry}"
-            queue_file.write_text("\n".join(lines) + "\n")
-            print(f"\nMarked '{entry}' as done in queue")
+            completed_entry = queue.entries.pop(0)
+            queue.completed.append({
+                "preset": completed_entry.preset,
+                "targets": completed_entry.targets,
+                "provider": completed_entry.provider,
+                "fraction": completed_entry.fraction,
+                "completed_at": datetime.now().isoformat(),
+                "run_id": metadata.run_id,
+            })
+            queue.save()
+            print(f"\nMarked as completed in queue")
+        else:
+            queue.entries.pop(0)
 
         processed += 1
 
@@ -533,18 +536,12 @@ def cmd_selftest(args) -> int:
     import shutil
 
     hammer_dir = get_hammer_bench_dir()
-    mathlib_dir = get_mathlib_dir()
     expected_dir = hammer_dir / "tests" / "expected"
 
     print("=" * 60)
     print("hammer-bench self-test")
     print("=" * 60)
     print()
-
-    # Check if mathlib4 is initialized
-    if not mathlib_dir.exists():
-        print("Error: mathlib4 not initialized. Run 'hammer-bench init' first.", file=sys.stderr)
-        return 1
 
     # Parse the source spec
     source = SourceSpec.parse(SELFTEST_SOURCE)

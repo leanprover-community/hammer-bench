@@ -123,19 +123,26 @@ class SourceSpec:
         """Check if this uses a short repo name (vs full owner/repo path)."""
         return "/" not in self.repo
 
-    def github_url(self, repos: Optional[dict] = None) -> str:
+    def resolve_url(self, repos: dict) -> str:
         """Get the GitHub URL for this repo.
 
         Args:
-            repos: Optional dict of repo configs (needed for short names)
+            repos: Dict of repo configs (from repos.yaml)
+
+        Raises:
+            ValueError: If short name is not found in repos config
         """
         if "/" in self.repo:
+            # Full owner/repo format - use directly
             return f"https://github.com/{self.repo}.git"
-        elif repos and self.repo in repos:
+        elif self.repo in repos:
+            # Short name found in config
             return repos[self.repo].url
         else:
-            # Assume leanprover-community for short names without config
-            return f"https://github.com/leanprover-community/{self.repo}.git"
+            raise ValueError(
+                f"Unknown repository '{self.repo}'. "
+                f"Either use full 'owner/repo@ref' format, or define '{self.repo}' in config/repos.yaml"
+            )
 
     def to_dict(self) -> dict:
         return {"repo": self.repo, "ref": self.ref}
