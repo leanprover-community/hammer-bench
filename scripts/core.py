@@ -78,15 +78,26 @@ class RunConfig:
     suggestion_provider: Optional[SuggestionProvider] = None
     timing_mode: bool = True
     build_timeout_hours: float = 6.0
+    # Target collection name (e.g., "ordered_field") and resolved targets
+    target_collection: str = "all"
+    targets: list = None  # List of lake build targets, defaults to ["Mathlib"]
+
+    def __post_init__(self):
+        if self.targets is None:
+            self.targets = ["Mathlib"]
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "preset_name": self.preset_name,
             "linters": self.linters.to_dict(),
             "suggestion_provider": self.suggestion_provider.to_dict() if self.suggestion_provider else None,
             "timing_mode": self.timing_mode,
             "build_timeout_hours": self.build_timeout_hours,
         }
+        if self.target_collection != "all":
+            d["target_collection"] = self.target_collection
+            d["targets"] = self.targets
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "RunConfig":
@@ -95,6 +106,8 @@ class RunConfig:
             linters=LinterConfig.from_dict(d["linters"]),
             suggestion_provider=SuggestionProvider.from_dict(d["suggestion_provider"]) if d.get("suggestion_provider") else None,
             timing_mode=d.get("timing_mode", True),
+            target_collection=d.get("target_collection", "all"),
+            targets=d.get("targets"),
             build_timeout_hours=d.get("build_timeout_hours", 6.0),
         )
 

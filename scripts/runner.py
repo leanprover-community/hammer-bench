@@ -81,22 +81,47 @@ def load_providers() -> dict:
     return {}
 
 
+def load_targets() -> dict:
+    """Load target collections from config/targets.yaml or targets.json."""
+    hammer_dir = get_hammer_bench_dir()
+
+    # Try YAML first if available
+    if YAML_AVAILABLE:
+        targets_file = hammer_dir / "config" / "targets.yaml"
+        if targets_file.exists():
+            with open(targets_file) as f:
+                return yaml.safe_load(f) or {}
+
+    # Fall back to JSON
+    targets_file = hammer_dir / "config" / "targets.json"
+    if targets_file.exists():
+        with open(targets_file) as f:
+            return json.load(f)
+
+    return {}
+
+
 def parse_queue_entry(entry: str) -> tuple:
-    """Parse a queue entry like 'preset_name', 'preset_name:provider', or 'preset_name/fraction'.
+    """Parse a queue entry with optional target collection, provider, and fraction.
 
     Supported formats:
         preset_name
         preset_name/fraction
+        preset_name@targets
+        preset_name@targets/fraction
         preset_name:provider
         preset_name:provider/fraction
+        preset_name@targets:provider
+        preset_name@targets:provider/fraction
 
     Returns:
-        (preset_name, provider_name or None, fraction or None)
+        (preset_name, provider_name or None, fraction or None, targets or None)
     """
     entry = entry.strip()
     fraction = None
+    targets = None
 
-    # Check for fraction suffix first
+    # Check for fraction suffix first (must be last)
     if "/" in entry:
         entry, fraction_str = entry.rsplit("/", 1)
         try:
@@ -104,19 +129,31 @@ def parse_queue_entry(entry: str) -> tuple:
         except ValueError:
             raise ValueError(f"Invalid fraction '{fraction_str}' - must be an integer")
 
-    # Now check for provider
+    # Check for provider (after @targets if present)
     if ":" in entry:
-        preset, provider = entry.split(":", 1)
-        return preset.strip(), provider.strip(), fraction
+        entry, provider = entry.rsplit(":", 1)
+        provider = provider.strip()
+    else:
+        provider = None
 
-    return entry, None, fraction
+    # Check for targets
+    if "@" in entry:
+        preset, targets = entry.split("@", 1)
+        preset = preset.strip()
+        targets = targets.strip()
+    else:
+        preset = entry
+
+    return preset, provider, fraction, targets
 
 
 def get_run_config(preset_name: str, provider_name: Optional[str] = None,
-                   fraction_override: Optional[int] = None) -> RunConfig:
-    """Get a RunConfig from preset and optional provider/fraction overrides."""
+                   fraction_override: Optional[int] = None,
+                   target_collection: Optional[str] = None) -> RunConfig:
+    """Get a RunConfig from preset and optional provider/fraction/target overrides."""
     presets = load_presets()
     providers = load_providers()
+    all_targets = load_targets()
 
     if preset_name not in presets:
         raise ValueError(f"Unknown preset: {preset_name}")
@@ -143,26 +180,33 @@ def get_run_config(preset_name: str, provider_name: Optional[str] = None,
             command=provider_config.get("command"),
         )
 
+    # Resolve target collection
+    resolved_target_collection = target_collection or "all"
+    if resolved_target_collection not in all_targets:
+        raise ValueError(f"Unknown target collection: {resolved_target_collection}")
+    targets = all_targets[resolved_target_collection].get("targets", ["Mathlib"])
+
     return RunConfig(
         preset_name=preset_name,
         linters=linters,
         suggestion_provider=provider,
         timing_mode=preset.get("timing_mode", True),
         build_timeout_hours=preset.get("build_timeout_hours", 6.0),
+        target_collection=resolved_target_collection,
+        targets=targets,
     )
 
 
-def build_lake_command(config: RunConfig, target: str = "Mathlib") -> tuple:
+def build_lake_command(config: RunConfig) -> tuple:
     """Build the lake command with appropriate -K flags.
 
     Args:
-        config: Run configuration
-        target: Build target (default: Mathlib)
+        config: Run configuration (includes targets)
 
     Returns:
         Tuple of (command arguments list, environment variables dict)
     """
-    cmd = ["lake", "build", target]
+    cmd = ["lake", "build"] + config.targets
     env_vars = {}
 
     # Add linter flags
@@ -301,6 +345,8 @@ def execute_run(config: RunConfig, dry_run: bool = False) -> Optional[RunMetadat
 
     print(f"Run ID: {run_id}")
     print(f"Preset: {config.preset_name}")
+    if config.target_collection != "all":
+        print(f"Targets: {config.target_collection} ({len(config.targets)} module(s))")
     print(f"Provider: {config.suggestion_provider.name if config.suggestion_provider else 'default'}")
     print(f"Command: {' '.join(cmd)}")
     if env_vars:

@@ -164,8 +164,8 @@ def cmd_run(args) -> int:
 
         # Parse the entry
         try:
-            preset_name, provider_name, fraction = parse_queue_entry(entry)
-            config = get_run_config(preset_name, provider_name, fraction)
+            preset_name, provider_name, fraction, targets = parse_queue_entry(entry)
+            config = get_run_config(preset_name, provider_name, fraction, targets)
         except ValueError as e:
             print(f"Error parsing queue entry '{entry}': {e}", file=sys.stderr)
             continue
