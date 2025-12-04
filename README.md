@@ -1,14 +1,13 @@
 # Hammer Benchmarking Tool
 
-A tool for systematically benchmarking Lean 4 "hammer" tactics (grind, simp_all, aesop, etc.)
-across Mathlib to measure their effectiveness at replacing existing proof tactics.
+A tool for systematically benchmarking Lean 4 "hammer" tactics (grind, simp_all, aesop, omega, etc.) across Mathlib and downstream projects to measure their effectiveness at replacing existing proof tactics.
 
 ## Quick Start
 
 ### Prerequisites
-- Python 3.10+
+- Python 3.10+ with pyyaml (`pip install pyyaml`)
 - Git
-- Lake (comes with Lean toolchain)
+- Elan/Lake (Lean toolchain)
 
 ### Setup
 ```bash
@@ -16,14 +15,20 @@ cd ~/hammer-bench
 ./bin/hammer-bench init
 ```
 
-This creates a git worktree of mathlib4 at `~/hammer-bench/mathlib4/`.
+This clones mathlib4 to `~/hammer-bench/worktrees/mathlib4/`.
 
-### Running Your First Benchmark
+### Running a Benchmark
+
+Edit `queue.yaml`:
+```yaml
+source: mathlib4@master
+
+queue:
+  - grind@quick_test
+```
+
+Then run:
 ```bash
-# Add a benchmark to the queue
-./bin/hammer-bench queue add grind_only
-
-# Run the benchmark (this takes several hours for full Mathlib)
 ./bin/hammer-bench run
 ```
 
@@ -32,180 +37,276 @@ This creates a git worktree of mathlib4 at `~/hammer-bench/mathlib4/`.
 # List completed runs
 ./bin/hammer-bench list
 
-# Show summary for a specific run
-./bin/hammer-bench show 2025-12-04T10-30-00_grind_abc123
+# Show details for a run
+./bin/hammer-bench show <run_id>
 
 # Compare two runs
-./bin/hammer-bench compare RUN1 RUN2
+./bin/hammer-bench compare <run1> <run2>
 ```
 
-## Concepts
+## Queue Format
 
-### Tactics
-The tool measures these hammer tactics:
-- `grind` - General automation tactic
-- `simp_all` - Simplification tactic
-- `aesop` - Proof search tactic
-- `grind +suggestions` - grind with library suggestions enabled
-- `simp_all? +suggestions` - simp_all with suggestions
+The queue is a YAML file (`queue.yaml`):
 
-### Suggestion Providers
-When using `+suggestions` variants, you can configure different suggestion providers
-that determine which lemmas are suggested to the tactic.
+```yaml
+# Source repository and ref
+source: mathlib4-nightly-testing@hammer_measurements
 
-### Presets
-Named configurations in `config/presets.yaml`:
-- `grind_only` - Just grind, full coverage
-- `simp_all_only` - Just simp_all, full coverage
-- `grind_f10` - grind at 10% sampling (faster)
-- `coverage_all` - All tactics together (for coverage analysis)
+queue:
+  # String shorthand: preset@targets:provider/fraction
+  - grind@quick_test
+  - omega@logic/100
+
+  # Or explicit format
+  - preset: simp_all
+    targets: algebra_group
+    provider: sineQuaNon
+    fraction: 50
+
+# Completed runs (managed automatically)
+completed:
+  - preset: grind
+    targets: quick_test
+    completed_at: 2025-12-04T10:30:00
+    run_id: 2025-12-04T10-30-00_grind_abc1234
+```
+
+### Source Specification
+
+Two formats are supported:
+
+1. **Short name** (from `config/repos.yaml`):
+   ```yaml
+   source: mathlib4@master
+   source: mathlib4-nightly-testing@hammer_measurements
+   ```
+
+2. **Full GitHub path**:
+   ```yaml
+   source: leanprover-community/mathlib4@v4.14.0
+   source: my-org/my-lean-project@main
+   ```
+
+Short names must be defined in `config/repos.yaml`.
 
 ## Configuration
 
 ### config/presets.yaml
+
+Presets define which tactic to run and build parameters:
+
 ```yaml
-grind_only:
-  linters:
-    tryAtEachStepGrind: true
+grind:
+  customTactic: grind
+  fraction: 1
+  timing_mode: true
+  build_timeout_hours: 6
+  description: Run grind at every proof step
+
+omega:
+  customTactic: omega
   fraction: 1
   timing_mode: true
   build_timeout_hours: 6
 
-grind_f10:
-  linters:
-    tryAtEachStepGrind: true
-  fraction: 10
+grind_suggestions:
+  customTactic: grind +suggestions
+  fraction: 1
   timing_mode: true
-  build_timeout_hours: 3
+  build_timeout_hours: 8
 ```
 
+All presets use the generic `TRY_AT_EACH_STEP_*` mechanism - no Mathlib code changes needed per tactic.
+
+### config/targets.yaml
+
+Target collections for partial builds:
+
+```yaml
+all:
+  description: Full Mathlib build (default)
+  targets:
+    - Mathlib
+
+quick_test:
+  description: Minimal targets for quick testing
+  targets:
+    - Mathlib.Logic.Basic
+
+logic:
+  description: Core logic modules
+  targets:
+    - Mathlib.Logic.Basic
+    - Mathlib.Logic.Function.Basic
+    - Mathlib.Logic.Relation
+
+algebra_group:
+  description: Group theory basics
+  targets:
+    - Mathlib.Algebra.Group.Basic
+    - Mathlib.Algebra.Group.Defs
+```
+
+### config/repos.yaml
+
+Repository definitions for short names:
+
+```yaml
+repos:
+  mathlib4:
+    url: https://github.com/leanprover-community/mathlib4.git
+    default_ref: master
+    patch_file: Mathlib/Init.lean
+
+  mathlib4-nightly-testing:
+    url: https://github.com/leanprover-community/mathlib4-nightly-testing.git
+    default_ref: nightly-testing
+    patch_file: Mathlib/Init.lean
+
+  # Add downstream projects:
+  # my-project:
+  #   url: https://github.com/user/my-lean-project.git
+  #   patch_file: MyProject/Init.lean
+```
+
+The `patch_file` is used when applying custom suggestion providers.
+
 ### config/providers.yaml
+
+Suggestion providers for `+suggestions` variants:
+
 ```yaml
 providers:
   default:
-    command: null  # No set_library_suggestions
+    command: null
+    description: Use default suggestion provider
 
   sineQuaNon:
-    command: "Lean.LibrarySuggestions.sineQuaNonSelector"
+    command: Lean.LibrarySuggestions.sineQuaNonSelector
+    description: Use the Sine Qua Non suggestion selector
 
   disabled:
     command: "fun _ _ => pure #[]"
+    description: Disable suggestions entirely
 ```
 
-## Queue System
+## Commands
 
-The queue is a simple text file (`queue.txt`):
-```
-# Pending runs (one per line)
-grind_only
-simp_all_only:sineQuaNon    # preset:provider
+```bash
+# Initialize (clone mathlib4)
+hammer-bench init
 
-# Completed runs are marked:
-#done:2025-12-04T10-30-00: grind_only
+# Queue management
+hammer-bench queue              # List queue
+hammer-bench queue add grind@quick_test
+hammer-bench queue clear
+
+# Run benchmarks
+hammer-bench run                # Process entire queue
+hammer-bench run --once         # Process one entry
+hammer-bench run --dry-run      # Show what would run
+
+# View results
+hammer-bench list               # List runs
+hammer-bench show <run_id>      # Show run details
+hammer-bench compare <r1> <r2>  # Compare runs
+hammer-bench validate <r1> <r2> # Check consistency
+
+# Repository management
+hammer-bench check-base         # Show current checkout
+hammer-bench rebase <tag>       # Checkout different ref
+
+# Testing
+hammer-bench selftest           # Run self-tests
+hammer-bench selftest --dry-run
 ```
 
 ## Output Format
 
-Each run produces:
-- `metadata.json` - Configuration, timing, machine info
+Each run creates a directory in `~/hammer-bench/runs/<run_id>/`:
+
+- `metadata.json` - Configuration, timing, machine info, source
 - `messages.jsonl` - All "can be replaced with" messages
 - `build.log.gz` - Compressed build output
-- `checksums.sha256` - File integrity
 
-### Message Format
-Each line in `messages.jsonl`:
+### metadata.json
+```json
+{
+  "run_id": "2025-12-04T10-30-00_grind_abc1234",
+  "machine": "hostname",
+  "base_commit": "abc1234...",
+  "base_ref": "master",
+  "lean_toolchain": "leanprover/lean4:v4.14.0",
+  "source": {"repo": "mathlib4", "ref": "master"},
+  "config": {...},
+  "status": "completed",
+  "duration_seconds": 3600,
+  "message_count": 1234
+}
+```
+
+### messages.jsonl
 ```json
 {"file": "Mathlib/Data/List/Basic.lean", "row": 123, "col": 5, "original": "simp", "replacement": "grind", "time_ms": 45}
 ```
 
-## Analysis
+## Directory Structure
 
-### Comparing Runs
-```bash
-./bin/hammer-bench compare run1 run2
+```
+~/hammer-bench/
+├── bin/hammer-bench        # Entry point script
+├── config/
+│   ├── presets.yaml        # Tactic configurations
+│   ├── providers.yaml      # Suggestion providers
+│   ├── repos.yaml          # Repository definitions
+│   └── targets.yaml        # Target collections
+├── queue.yaml              # Run queue
+├── runs/                   # Benchmark results (gitignored)
+├── worktrees/              # Repository checkouts (gitignored)
+│   ├── mathlib4/
+│   └── mathlib4-nightly-testing/
+├── scripts/                # Python implementation
+└── tests/
+    ├── expected/           # Expected outputs for selftest
+    └── README.md
 ```
 
-Output:
-```
-## Comparison: run1 vs run2
+## Multi-Repository Support
 
-| Tactic    | Run1 Only | Run2 Only | Both | Neither |
-|-----------|-----------|-----------|------|---------|
-| grind     | 234       | 45        | 1245 | 8976    |
-| simp_all  | 156       | 23        | 987  | 9334    |
-```
+hammer-bench can target any Lean project downstream of Mathlib:
 
-### Validating Consistency
-Run the same config twice and compare:
-```bash
-./bin/hammer-bench queue add grind_only
-./bin/hammer-bench queue add grind_only
-./bin/hammer-bench run
-./bin/hammer-bench validate run1 run2
-```
+1. Add the repository to `config/repos.yaml`:
+   ```yaml
+   repos:
+     my-project:
+       url: https://github.com/user/my-lean-project.git
+       default_ref: main
+       patch_file: MyProject/Init.lean  # or null
+   ```
 
-## Reproducing Results
+2. Use it in your queue:
+   ```yaml
+   source: my-project@main
+   queue:
+     - grind
+   ```
 
-To reproduce a benchmark:
-1. Clone this repository
-2. Run `./bin/hammer-bench init`
-3. Check out the same base: `./bin/hammer-bench rebase nightly-testing-2025-12-01`
-4. Add the same config to queue and run
-
-## Extending
-
-### Adding a New Tactic
-1. Add the linter to `Mathlib/Tactic/TacticAnalysis/Declarations.lean`
-2. Add preset(s) to `config/presets.yaml`
-
-### Adding a New Suggestion Provider
-1. Define the selector function in Lean
-2. Add entry to `config/providers.yaml`
-
-## Metadata Recorded
-
-Each run records:
-- Machine name (hostname)
-- Base commit (e.g., `nightly-testing-2025-12-01`)
-- Lean toolchain version
-- Which linters were enabled
-- Sampling fraction
-- Suggestion provider (if any)
-- Total run time
-- Message count
-- Timeout settings and whether timeout was hit
-- Per-tactic timing (in ms) for each replacement suggestion
-
-## Timeouts
-
-**Build-level timeout**: Prevents runaway builds
-```yaml
-grind_only:
-  build_timeout_hours: 6  # Kill build after 6 hours
-```
-
-**Per-tactic timeout**: Control via Lean's maxHeartbeats option:
-```bash
-lake build Mathlib -KmaxHeartbeats=200000000
-```
-
-**Timing data**: Each "can be replaced with" message includes timing:
-```
-`simp` can be replaced with `grind` (45ms)
-```
-
-This enables timing analysis:
-```bash
-./bin/hammer-bench stats run1 --timing
-# Shows: mean, median, p95, p99 timing per tactic
-```
+The project must depend on Mathlib to have the tactic analysis linters available.
 
 ## Required Mathlib Changes
 
-See [MATHLIB.md](MATHLIB.md) for the minimal changes required in Mathlib to support
-this benchmarking tool. These should be merged to Mathlib master so the tool can
-target any commit.
+See [MATHLIB.md](MATHLIB.md) for the changes required in Mathlib to support this tool. These add a generic `tryAtEachStepFromEnv` linter that reads the tactic to run from environment variables.
+
+## Self-Test
+
+Run the test suite to verify the tool works:
+
+```bash
+hammer-bench selftest
+```
+
+This checks out a known commit and runs small benchmarks, comparing against expected outputs.
 
 ## License
 
-MIT License - see Mathlib for licensing of the underlying code.
+MIT License
