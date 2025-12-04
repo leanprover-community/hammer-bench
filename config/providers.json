@@ -1,0 +1,20 @@
+{
+  "_comment": "Suggestion providers for hammer tactics. These configure the set_library_suggestions command in Mathlib.Init",
+
+  "providers": {
+    "default": {
+      "command": null,
+      "description": "Use default suggestion provider (no modification)"
+    },
+
+    "sineQuaNon": {
+      "command": "Lean.LibrarySuggestions.sineQuaNonSelector",
+      "description": "Use the Sine Qua Non suggestion selector"
+    },
+
+    "disabled": {
+      "command": "fun _ _ => pure #[]",
+      "description": "Disable suggestions entirely (return empty list)"
+    }
+  }
+}
