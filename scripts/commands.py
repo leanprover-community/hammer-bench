@@ -522,7 +522,7 @@ def cmd_cleanup(args) -> int:
 SELFTEST_SOURCE = "kim-em/mathlib4@feat/tryAtEachStepFromEnv"
 SELFTEST_TESTS = [
     # (preset, targets, description)
-    ("omega", "quick_test", "omega on Logic.Basic"),
+    ("omega", "arithmetic_test", "omega on Nat.Basic"),
     ("decide", "quick_test", "decide on Logic.Basic"),
 ]
 

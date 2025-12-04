@@ -43,8 +43,8 @@ quick_test:
   targets:
     - Mathlib.Logic.Basic
 
-lia_test:
-  description: Target for lia selftest (includes arithmetic)
+arithmetic_test:
+  description: Target for arithmetic tactic selftests (omega, lia, etc.)
   targets:
     - Mathlib.Data.Nat.Basic
 

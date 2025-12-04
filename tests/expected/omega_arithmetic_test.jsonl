@@ -1,0 +1,16 @@
+{"file": "Mathlib/Data/Nat/Init.lean", "row": 86, "col": 12, "original": "simp", "replacement": "omega", "time_ms": 3}
+{"file": "Mathlib/Data/Nat/Init.lean", "row": 87, "col": 12, "original": "simp", "replacement": "omega", "time_ms": 2}
+{"file": "Mathlib/Data/Nat/Init.lean", "row": 88, "col": 16, "original": "simp", "replacement": "omega", "time_ms": 3}
+{"file": "Mathlib/Data/Nat/Init.lean", "row": 100, "col": 8, "original": "rw [Nat.add_comm, add_mul_mod_self_left, mul_mod_right, mod_eq_of_lt] <;> simp", "replacement": "omega", "time_ms": 11}
+{"file": "Mathlib/Data/Nat/Init.lean", "row": 109, "col": 2, "original": "rw [Nat.le_div_iff_mul_le Nat.zero_lt_two, \u2190 Int.ofNat_le, Int.natCast_mul,\n  Int.ofNat_two]", "replacement": "omega", "time_ms": 12}
+{"file": "Mathlib/Data/Nat/Init.lean", "row": 122, "col": 2, "original": "cutsat", "replacement": "omega", "time_ms": 10}
+{"file": "Mathlib/Data/Nat/Init.lean", "row": 245, "col": 18, "original": "simp at h", "replacement": "omega", "time_ms": 1}
+{"file": "Mathlib/Data/Nat/Init.lean", "row": 258, "col": 6, "original": "cases hmn", "replacement": "omega", "time_ms": 2}
+{"file": "Mathlib/Data/Nat/Init.lean", "row": 312, "col": 12, "original": "exact self", "replacement": "omega", "time_ms": 1}
+{"file": "Mathlib/Data/Nat/Init.lean", "row": 381, "col": 12, "original": "exact hP", "replacement": "omega", "time_ms": 1}
+{"file": "Mathlib/Data/Nat/Init.lean", "row": 400, "col": 4, "original": "apply Nat.lt_of_le_of_lt (Nat.le_succ _) h", "replacement": "omega", "time_ms": 2}
+{"file": "Mathlib/Data/Nat/Init.lean", "row": 414, "col": 2, "original": "cutsat", "replacement": "omega", "time_ms": 6}
+{"file": "Mathlib/Data/Nat/Init.lean", "row": 467, "col": 77, "original": "cutsat", "replacement": "omega", "time_ms": 2}
+{"file": "Mathlib/Data/Nat/Init.lean", "row": 480, "col": 68, "original": "cutsat", "replacement": "omega", "time_ms": 2}
+{"file": "Mathlib/Order/Defs/Unbundled.lean", "row": 397, "col": 4, "original": "exact h\u2082", "replacement": "omega", "time_ms": 0}
+{"file": "Mathlib/Order/Defs/Unbundled.lean", "row": 404, "col": 4, "original": "exact h\u2081", "replacement": "omega", "time_ms": 0}
