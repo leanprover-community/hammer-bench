@@ -43,6 +43,11 @@ quick_test:
   targets:
     - Mathlib.Logic.Basic
 
+lia_test:
+  description: Target for lia selftest (includes arithmetic)
+  targets:
+    - Mathlib.Data.Nat.Basic
+
 sample:
   description: Diverse sample across 11 Mathlib areas (~22% of Mathlib)
   targets:

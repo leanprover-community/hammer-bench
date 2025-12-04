@@ -29,6 +29,13 @@ omega:
   build_timeout_hours: 6
   description: Run omega at every proof step
 
+lia:
+  customTactic: lia
+  fraction: 1
+  timing_mode: true
+  build_timeout_hours: 6
+  description: Run lia at every proof step
+
 decide:
   customTactic: decide
   fraction: 1

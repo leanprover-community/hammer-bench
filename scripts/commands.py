@@ -605,6 +605,9 @@ def cmd_selftest(args) -> int:
                     expected_messages = set()
                     with open(expected_file) as f:
                         for line in f:
+                            line = line.strip()
+                            if not line:  # Skip empty lines
+                                continue
                             msg = json.loads(line)
                             # Key by location + replacement (ignore timing)
                             key = (msg["file"], msg["row"], msg["col"], msg["replacement"])
@@ -615,6 +618,9 @@ def cmd_selftest(args) -> int:
                     run_dir = get_runs_dir() / metadata.run_id
                     with open(run_dir / "messages.jsonl") as f:
                         for line in f:
+                            line = line.strip()
+                            if not line:  # Skip empty lines
+                                continue
                             msg = json.loads(line)
                             key = (msg["file"], msg["row"], msg["col"], msg["replacement"])
                             actual_messages.add(key)

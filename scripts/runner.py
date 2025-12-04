@@ -499,10 +499,97 @@ def unpatch_suggestion_provider(repo_dir: Path, patch_file: Optional[str] = None
     init_file.write_text("\n".join(new_lines))
 
 
-def patch_lakefile_linter(repo_dir: Path, linter_option: str, fraction: int = 1) -> Path:
-    """Patch lakefile.lean to enable a linter option.
+def _remove_hammer_bench_patch(content: str, start_marker: str, end_marker: str) -> str:
+    """Remove existing hammer-bench patch from content."""
+    if start_marker not in content:
+        return content
 
-    Adds the linter option to mathlibOnlyLinters array.
+    lines = content.split("\n")
+    new_lines = []
+    skip = False
+    for line in lines:
+        if start_marker in line:
+            skip = True
+        elif end_marker in line:
+            skip = False
+        elif not skip:
+            new_lines.append(line)
+    return "\n".join(new_lines)
+
+
+def _patch_lakefile_lean(lakefile: Path, linter_option: str, fraction: int) -> None:
+    """Patch a Mathlib-style lakefile.lean with mathlibOnlyLinters array."""
+    content = lakefile.read_text()
+
+    # Remove any existing patch
+    content = _remove_hammer_bench_patch(content, "-- HAMMER_BENCH_LINTER_START", "-- HAMMER_BENCH_LINTER_END")
+
+    # Find mathlibOnlyLinters and insert our options
+    patch = f"""  -- HAMMER_BENCH_LINTER_START
+  ⟨`{linter_option}, true⟩,
+  ⟨`linter.tacticAnalysis.tryAtEachStep.fraction, .ofNat {fraction}⟩,
+  -- HAMMER_BENCH_LINTER_END"""
+
+    marker = "abbrev mathlibOnlyLinters : Array LeanOption := #["
+    if marker not in content:
+        raise ValueError(f"Could not find '{marker}' in lakefile.lean")
+
+    content = content.replace(marker, marker + "\n" + patch)
+    lakefile.write_text(content)
+
+
+def _patch_lakefile_toml(lakefile: Path, linter_option: str, fraction: int) -> None:
+    """Patch a lakefile.toml by adding linter options to [leanOptions] section."""
+    content = lakefile.read_text()
+
+    # Remove any existing patch
+    content = _remove_hammer_bench_patch(content, "# HAMMER_BENCH_LINTER_START", "# HAMMER_BENCH_LINTER_END")
+
+    # Options to add (with weak. prefix for use during lake build)
+    patch_lines = f"""# HAMMER_BENCH_LINTER_START
+"weak.{linter_option}" = true
+"weak.linter.tacticAnalysis.tryAtEachStep.fraction" = {fraction}
+# HAMMER_BENCH_LINTER_END"""
+
+    # Case 1: Has [leanOptions] section - insert after section header
+    if "[leanOptions]" in content:
+        content = content.replace("[leanOptions]", f"[leanOptions]\n{patch_lines}")
+        lakefile.write_text(content)
+        return
+
+    # Case 2: Has inline leanOptions = {...} - convert to section style
+    import re
+    inline_pattern = r'leanOptions\s*=\s*\{([^}]*)\}'
+    match = re.search(inline_pattern, content)
+    if match:
+        # Extract existing options from inline format
+        inline_opts = match.group(1).strip()
+        # Convert inline k = v pairs to TOML section format
+        section_lines = ["[leanOptions]", patch_lines]
+        if inline_opts:
+            # Parse inline options (simple k = v pairs separated by commas)
+            for opt in inline_opts.split(","):
+                opt = opt.strip()
+                if opt:
+                    section_lines.append(opt)
+        # Replace inline with section
+        content = re.sub(inline_pattern, "\n".join(section_lines), content)
+        lakefile.write_text(content)
+        return
+
+    # Case 3: No leanOptions at all - add new section before first [[require]] or at end
+    section = f"\n[leanOptions]\n{patch_lines}\n"
+    if "[[require]]" in content:
+        content = content.replace("[[require]]", f"{section}\n[[require]]", 1)
+    else:
+        content = content.rstrip() + "\n" + section
+    lakefile.write_text(content)
+
+
+def patch_lakefile_linter(repo_dir: Path, linter_option: str, fraction: int = 1) -> Path:
+    """Patch lakefile to enable a linter option.
+
+    Supports both lakefile.lean (Mathlib-style) and lakefile.toml.
 
     Args:
         repo_dir: Path to repository directory
@@ -512,66 +599,36 @@ def patch_lakefile_linter(repo_dir: Path, linter_option: str, fraction: int = 1)
     Returns:
         Path to the patched lakefile
     """
-    lakefile = repo_dir / "lakefile.lean"
-    if not lakefile.exists():
-        raise FileNotFoundError(f"lakefile.lean not found at {lakefile}")
+    lakefile_toml = repo_dir / "lakefile.toml"
+    lakefile_lean = repo_dir / "lakefile.lean"
 
-    content = lakefile.read_text()
-
-    # Remove any existing hammer-bench patch
-    if "-- HAMMER_BENCH_LINTER_START" in content:
-        lines = content.split("\n")
-        new_lines = []
-        skip = False
-        for line in lines:
-            if "-- HAMMER_BENCH_LINTER_START" in line:
-                skip = True
-            elif "-- HAMMER_BENCH_LINTER_END" in line:
-                skip = False
-            elif not skip:
-                new_lines.append(line)
-        content = "\n".join(new_lines)
-
-    # Find mathlibOnlyLinters and insert our options
-    # We insert right after the opening #[
-    patch = f"""  -- HAMMER_BENCH_LINTER_START
-  ⟨`{linter_option}, true⟩,
-  ⟨`linter.tacticAnalysis.tryAtEachStep.fraction, .ofNat {fraction}⟩,
-  -- HAMMER_BENCH_LINTER_END"""
-
-    # Find the mathlibOnlyLinters definition and insert after #[
-    marker = "abbrev mathlibOnlyLinters : Array LeanOption := #["
-    if marker not in content:
-        raise ValueError(f"Could not find '{marker}' in lakefile.lean")
-
-    content = content.replace(marker, marker + "\n" + patch)
-
-    lakefile.write_text(content)
-    return lakefile
+    # Prefer lakefile.toml if it exists
+    if lakefile_toml.exists():
+        _patch_lakefile_toml(lakefile_toml, linter_option, fraction)
+        return lakefile_toml
+    elif lakefile_lean.exists():
+        _patch_lakefile_lean(lakefile_lean, linter_option, fraction)
+        return lakefile_lean
+    else:
+        raise FileNotFoundError(f"No lakefile found at {repo_dir}")
 
 
 def unpatch_lakefile_linter(repo_dir: Path) -> None:
-    """Remove the linter patch from lakefile.lean."""
-    lakefile = repo_dir / "lakefile.lean"
-    if not lakefile.exists():
-        return
+    """Remove the linter patch from lakefile."""
+    lakefile_toml = repo_dir / "lakefile.toml"
+    lakefile_lean = repo_dir / "lakefile.lean"
 
-    content = lakefile.read_text()
-    if "-- HAMMER_BENCH_LINTER_START" not in content:
-        return
-
-    lines = content.split("\n")
-    new_lines = []
-    skip = False
-    for line in lines:
-        if "-- HAMMER_BENCH_LINTER_START" in line:
-            skip = True
-        elif "-- HAMMER_BENCH_LINTER_END" in line:
-            skip = False
-        elif not skip:
-            new_lines.append(line)
-
-    lakefile.write_text("\n".join(new_lines))
+    # Check both files
+    for lakefile, start_marker, end_marker in [
+        (lakefile_toml, "# HAMMER_BENCH_LINTER_START", "# HAMMER_BENCH_LINTER_END"),
+        (lakefile_lean, "-- HAMMER_BENCH_LINTER_START", "-- HAMMER_BENCH_LINTER_END"),
+    ]:
+        if not lakefile.exists():
+            continue
+        content = lakefile.read_text()
+        if start_marker in content:
+            content = _remove_hammer_bench_patch(content, start_marker, end_marker)
+            lakefile.write_text(content)
 
 
 def execute_run(config: RunConfig, dry_run: bool = False,
