@@ -10,7 +10,9 @@ from pathlib import Path
 from .core import (
     get_hammer_bench_dir,
     get_mathlib_dir,
+    get_repo_dir,
     get_runs_dir,
+    get_worktrees_dir,
     get_git_commit,
     get_git_ref,
     get_lean_toolchain,
@@ -30,6 +32,7 @@ from .runner import (
 def cmd_init(args) -> int:
     """Initialize the hammer-bench environment."""
     hammer_dir = get_hammer_bench_dir()
+    worktrees_dir = get_worktrees_dir()
     mathlib_dir = get_mathlib_dir()
 
     print(f"Initializing hammer-bench in {hammer_dir}")
@@ -37,6 +40,7 @@ def cmd_init(args) -> int:
     # Create directories if needed
     (hammer_dir / "runs").mkdir(parents=True, exist_ok=True)
     (hammer_dir / "config").mkdir(parents=True, exist_ok=True)
+    worktrees_dir.mkdir(parents=True, exist_ok=True)
 
     # Check if mathlib4 already exists
     if mathlib_dir.exists():
@@ -510,7 +514,8 @@ def cmd_cleanup(args) -> int:
 
 # Self-test configuration
 # TODO: Update this once upstream changes are merged
-SELFTEST_SOURCE = "leanprover-community/mathlib4-nightly-testing@hammer_measurements"
+# Use short repo name from config/repos.yaml
+SELFTEST_SOURCE = "mathlib4-nightly-testing@hammer_measurements"
 SELFTEST_TESTS = [
     # (preset, targets, description)
     ("omega", "quick_test", "omega on Logic.Basic"),

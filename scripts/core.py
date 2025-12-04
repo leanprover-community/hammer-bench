@@ -71,20 +71,71 @@ class SuggestionProvider:
 
 
 @dataclass
-class SourceSpec:
-    """Specification of which mathlib repository and ref to use.
+class RepoConfig:
+    """Configuration for a repository."""
+    name: str
+    url: str
+    default_ref: str = "master"
+    patch_file: Optional[str] = None  # File to patch for set_library_suggestions
 
-    Examples:
-        leanprover-community/mathlib4@master
-        leanprover-community/mathlib4-nightly-testing@hammer_measurements
-        leanprover-community/mathlib4@nightly-testing-2025-12-01
+    def to_dict(self) -> dict:
+        d = {"name": self.name, "url": self.url, "default_ref": self.default_ref}
+        if self.patch_file:
+            d["patch_file"] = self.patch_file
+        return d
+
+    @classmethod
+    def from_dict(cls, name: str, d: dict) -> "RepoConfig":
+        return cls(
+            name=name,
+            url=d["url"],
+            default_ref=d.get("default_ref", "master"),
+            patch_file=d.get("patch_file"),
+        )
+
+
+@dataclass
+class SourceSpec:
+    """Specification of which repository and ref to use.
+
+    Supports two formats:
+        1. Full GitHub path: owner/repo@ref
+           Example: leanprover-community/mathlib4@master
+
+        2. Short repo name (from repos.yaml): repo_name@ref
+           Example: mathlib4@master
+           Example: mathlib4-nightly-testing@hammer_measurements
+
+    The repo_name format is resolved via config/repos.yaml.
     """
-    repo: str  # e.g., "leanprover-community/mathlib4"
-    ref: str   # e.g., "master", "hammer_measurements", "nightly-testing-2025-12-01"
+    repo: str  # e.g., "leanprover-community/mathlib4" or "mathlib4" (short name)
+    ref: str   # e.g., "master", "hammer_measurements"
 
     @property
-    def github_url(self) -> str:
-        return f"https://github.com/{self.repo}.git"
+    def repo_name(self) -> str:
+        """Get the short repo name (last component of path, or the repo itself if short)."""
+        if "/" in self.repo:
+            return self.repo.rsplit("/", 1)[1]
+        return self.repo
+
+    @property
+    def is_short_name(self) -> bool:
+        """Check if this uses a short repo name (vs full owner/repo path)."""
+        return "/" not in self.repo
+
+    def github_url(self, repos: Optional[dict] = None) -> str:
+        """Get the GitHub URL for this repo.
+
+        Args:
+            repos: Optional dict of repo configs (needed for short names)
+        """
+        if "/" in self.repo:
+            return f"https://github.com/{self.repo}.git"
+        elif repos and self.repo in repos:
+            return repos[self.repo].url
+        else:
+            # Assume leanprover-community for short names without config
+            return f"https://github.com/leanprover-community/{self.repo}.git"
 
     def to_dict(self) -> dict:
         return {"repo": self.repo, "ref": self.ref}
@@ -95,12 +146,10 @@ class SourceSpec:
 
     @classmethod
     def parse(cls, spec: str) -> "SourceSpec":
-        """Parse a source spec string like 'owner/repo@ref'."""
+        """Parse a source spec string like 'repo@ref' or 'owner/repo@ref'."""
         if "@" not in spec:
-            raise ValueError(f"Invalid source spec '{spec}' - must be 'owner/repo@ref'")
+            raise ValueError(f"Invalid source spec '{spec}' - must be 'repo@ref' or 'owner/repo@ref'")
         repo, ref = spec.rsplit("@", 1)
-        if "/" not in repo:
-            raise ValueError(f"Invalid repo '{repo}' - must be 'owner/repo'")
         return cls(repo=repo.strip(), ref=ref.strip())
 
     def __str__(self) -> str:
@@ -246,9 +295,23 @@ def get_hammer_bench_dir() -> Path:
     return Path.home() / "hammer-bench"
 
 
+def get_worktrees_dir() -> Path:
+    """Get the worktrees directory."""
+    return get_hammer_bench_dir() / "worktrees"
+
+
+def get_repo_dir(repo_name: str = "mathlib4") -> Path:
+    """Get the directory for a specific repository worktree.
+
+    Args:
+        repo_name: Short name of the repository (e.g., "mathlib4", "mathlib4-nightly-testing")
+    """
+    return get_worktrees_dir() / repo_name
+
+
 def get_mathlib_dir() -> Path:
-    """Get the mathlib4 worktree directory."""
-    return get_hammer_bench_dir() / "mathlib4"
+    """Get the default mathlib4 worktree directory."""
+    return get_repo_dir("mathlib4")
 
 
 def get_runs_dir() -> Path:

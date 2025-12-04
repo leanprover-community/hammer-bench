@@ -20,6 +20,7 @@ except ImportError:
 from .core import (
     LinterConfig,
     Message,
+    RepoConfig,
     RunConfig,
     RunMetadata,
     SourceSpec,
@@ -32,7 +33,9 @@ from .core import (
     get_lean_toolchain,
     get_machine_name,
     get_mathlib_dir,
+    get_repo_dir,
     get_runs_dir,
+    get_worktrees_dir,
 )
 from .parser import parse_build_output
 
@@ -65,52 +68,100 @@ def load_targets() -> dict:
     return {}
 
 
-def checkout_source(source: SourceSpec, mathlib_dir: Optional[Path] = None) -> None:
-    """Checkout a specific source (repo + ref) in the mathlib directory.
+def load_repos() -> dict:
+    """Load repository configurations from config/repos.yaml.
+
+    Returns:
+        Dict mapping repo names to RepoConfig objects
+    """
+    repos_file = get_hammer_bench_dir() / "config" / "repos.yaml"
+    if repos_file.exists():
+        with open(repos_file) as f:
+            data = yaml.safe_load(f) or {}
+            repos_data = data.get("repos", {})
+            return {
+                name: RepoConfig.from_dict(name, config)
+                for name, config in repos_data.items()
+            }
+    return {}
+
+
+def get_repo_config(source: SourceSpec) -> Optional[RepoConfig]:
+    """Get the RepoConfig for a source spec, if available."""
+    repos = load_repos()
+    repo_name = source.repo_name
+    return repos.get(repo_name)
+
+
+def checkout_source(source: SourceSpec, repo_dir: Optional[Path] = None) -> Path:
+    """Checkout a specific source (repo + ref) in the worktrees directory.
+
+    If the worktree doesn't exist, it will be cloned. Otherwise, the specified
+    ref will be fetched and checked out.
 
     Args:
         source: The source specification (repo + ref)
-        mathlib_dir: Path to mathlib directory (defaults to get_mathlib_dir())
+        repo_dir: Path to repository directory (defaults to worktrees/<repo_name>)
+
+    Returns:
+        Path to the repository directory
     """
-    if mathlib_dir is None:
-        mathlib_dir = get_mathlib_dir()
+    repos = load_repos()
+    repo_config = repos.get(source.repo_name)
 
-    if not mathlib_dir.exists():
-        raise FileNotFoundError(f"mathlib4 directory not found at {mathlib_dir}")
+    if repo_dir is None:
+        repo_dir = get_repo_dir(source.repo_name)
 
-    # Add remote if needed (use repo name as remote name)
-    remote_name = source.repo.replace("/", "_")
-    result = subprocess.run(
-        ["git", "remote", "get-url", remote_name],
-        cwd=mathlib_dir,
-        capture_output=True,
-    )
-    if result.returncode != 0:
-        print(f"Adding remote {remote_name} -> {source.github_url}")
+    # Ensure worktrees directory exists
+    get_worktrees_dir().mkdir(parents=True, exist_ok=True)
+
+    # Get the URL
+    if repo_config:
+        url = repo_config.url
+    else:
+        url = source.github_url(repos)
+
+    if not repo_dir.exists():
+        # Clone the repository
+        print(f"Cloning {source.repo_name} from {url}...")
         subprocess.run(
-            ["git", "remote", "add", remote_name, source.github_url],
-            cwd=mathlib_dir,
+            ["git", "clone", url, str(repo_dir)],
+            check=True,
+        )
+    else:
+        # Add remote if needed (use repo name as remote name)
+        remote_name = source.repo.replace("/", "_")
+        result = subprocess.run(
+            ["git", "remote", "get-url", remote_name],
+            cwd=repo_dir,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            print(f"Adding remote {remote_name} -> {url}")
+            subprocess.run(
+                ["git", "remote", "add", remote_name, url],
+                cwd=repo_dir,
+                check=True,
+            )
+
+        # Fetch the ref
+        print(f"Fetching {source.ref} from {remote_name}...")
+        subprocess.run(
+            ["git", "fetch", remote_name, source.ref],
+            cwd=repo_dir,
             check=True,
         )
 
-    # Fetch the ref
-    print(f"Fetching {source.ref} from {remote_name}...")
-    subprocess.run(
-        ["git", "fetch", remote_name, source.ref],
-        cwd=mathlib_dir,
-        check=True,
-    )
-
     # Checkout the ref
-    print(f"Checking out {remote_name}/{source.ref}...")
-    # Use FETCH_HEAD since we just fetched the specific ref
+    print(f"Checking out {source.ref}...")
     subprocess.run(
         ["git", "checkout", "FETCH_HEAD", "--detach"],
-        cwd=mathlib_dir,
+        cwd=repo_dir,
         check=True,
     )
 
-    print(f"Checked out {source} at {get_git_commit(mathlib_dir)[:12]}")
+    print(f"Checked out {source} at {get_git_commit(repo_dir)[:12]}")
+    return repo_dir
 
 
 def parse_queue_file(queue_file: Path) -> tuple:
@@ -295,12 +346,15 @@ def build_lake_command(config: RunConfig) -> tuple:
     return cmd, env_vars
 
 
-def patch_suggestion_provider(mathlib_dir: Path, provider: Optional[SuggestionProvider]) -> Optional[Path]:
-    """Patch Mathlib/Init.lean to set a custom suggestion provider.
+def patch_suggestion_provider(repo_dir: Path, provider: Optional[SuggestionProvider],
+                              patch_file: Optional[str] = None) -> Optional[Path]:
+    """Patch a file to set a custom suggestion provider.
 
     Args:
-        mathlib_dir: Path to mathlib4 directory
+        repo_dir: Path to repository directory
         provider: Suggestion provider to use, or None for default
+        patch_file: Relative path to file to patch (e.g., "Mathlib/Init.lean")
+                   If None, defaults to "Mathlib/Init.lean"
 
     Returns:
         Path to the patched file if patching was done, None otherwise
@@ -308,9 +362,12 @@ def patch_suggestion_provider(mathlib_dir: Path, provider: Optional[SuggestionPr
     if provider is None or provider.command is None:
         return None
 
-    init_file = mathlib_dir / "Mathlib" / "Init.lean"
+    if patch_file is None:
+        patch_file = "Mathlib/Init.lean"
+
+    init_file = repo_dir / patch_file
     if not init_file.exists():
-        raise FileNotFoundError(f"Mathlib/Init.lean not found at {init_file}")
+        raise FileNotFoundError(f"{patch_file} not found at {init_file}")
 
     # Read current content
     content = init_file.read_text()
@@ -353,9 +410,18 @@ set_library_suggestions {provider.command}
     return init_file
 
 
-def unpatch_suggestion_provider(mathlib_dir: Path) -> None:
-    """Remove the suggestion provider patch from Mathlib/Init.lean."""
-    init_file = mathlib_dir / "Mathlib" / "Init.lean"
+def unpatch_suggestion_provider(repo_dir: Path, patch_file: Optional[str] = None) -> None:
+    """Remove the suggestion provider patch from the patched file.
+
+    Args:
+        repo_dir: Path to repository directory
+        patch_file: Relative path to file that was patched (e.g., "Mathlib/Init.lean")
+                   If None, defaults to "Mathlib/Init.lean"
+    """
+    if patch_file is None:
+        patch_file = "Mathlib/Init.lean"
+
+    init_file = repo_dir / patch_file
     if not init_file.exists():
         return
 
@@ -390,11 +456,21 @@ def execute_run(config: RunConfig, dry_run: bool = False,
     Returns:
         RunMetadata for the completed run, or None on failure
     """
-    mathlib_dir = get_mathlib_dir()
     runs_dir = get_runs_dir()
 
-    if not mathlib_dir.exists():
-        print("Error: mathlib4 not initialized. Run 'hammer-bench init' first.", file=sys.stderr)
+    # Determine the repo directory and config
+    if source:
+        repo_dir = get_repo_dir(source.repo_name)
+        repo_config = get_repo_config(source)
+    else:
+        repo_dir = get_mathlib_dir()
+        repo_config = None
+
+    patch_file = repo_config.patch_file if repo_config else None
+
+    if not repo_dir.exists():
+        print(f"Error: Repository not initialized at {repo_dir}.", file=sys.stderr)
+        print("Run 'hammer-bench init' or specify a source with #source: directive.", file=sys.stderr)
         return None
 
     run_id = generate_run_id(config.preset_name)
@@ -409,6 +485,7 @@ def execute_run(config: RunConfig, dry_run: bool = False,
     print(f"Preset: {config.preset_name}")
     if source:
         print(f"Source: {source}")
+    print(f"Repository: {repo_dir}")
     if config.target_collection != "all":
         print(f"Targets: {config.target_collection} ({len(config.targets)} module(s))")
     print(f"Provider: {config.suggestion_provider.name if config.suggestion_provider else 'default'}")
@@ -426,9 +503,9 @@ def execute_run(config: RunConfig, dry_run: bool = False,
     metadata = RunMetadata(
         run_id=run_id,
         machine=get_machine_name(),
-        base_commit=get_git_commit(mathlib_dir),
-        base_ref=get_git_ref(mathlib_dir),
-        lean_toolchain=get_lean_toolchain(mathlib_dir),
+        base_commit=get_git_commit(repo_dir),
+        base_ref=get_git_ref(repo_dir),
+        lean_toolchain=get_lean_toolchain(repo_dir),
         started_at=datetime.now(),
         completed_at=None,
         duration_seconds=None,
@@ -444,14 +521,17 @@ def execute_run(config: RunConfig, dry_run: bool = False,
     patched_file = None
     try:
         if config.suggestion_provider and config.suggestion_provider.command:
-            print(f"Patching suggestion provider: {config.suggestion_provider.name}")
-            patched_file = patch_suggestion_provider(mathlib_dir, config.suggestion_provider)
+            if patch_file:
+                print(f"Patching suggestion provider in {patch_file}: {config.suggestion_provider.name}")
+                patched_file = patch_suggestion_provider(repo_dir, config.suggestion_provider, patch_file)
+            else:
+                print(f"Warning: No patch_file configured for this repo, skipping suggestion provider patch")
 
         # Run lake clean
         print("Running lake clean...")
         subprocess.run(
             ["lake", "clean"],
-            cwd=mathlib_dir,
+            cwd=repo_dir,
             capture_output=True,
         )
 
@@ -466,7 +546,7 @@ def execute_run(config: RunConfig, dry_run: bool = False,
         try:
             result = subprocess.run(
                 cmd,
-                cwd=mathlib_dir,
+                cwd=repo_dir,
                 capture_output=True,
                 text=True,
                 timeout=timeout_seconds,
@@ -530,4 +610,4 @@ def execute_run(config: RunConfig, dry_run: bool = False,
         # Always unpatch
         if patched_file:
             print("Removing suggestion provider patch...")
-            unpatch_suggestion_provider(mathlib_dir)
+            unpatch_suggestion_provider(repo_dir, patch_file)

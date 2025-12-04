@@ -10,7 +10,7 @@ build/
 
 # Benchmark data (large, local)
 runs/
-mathlib4/
+worktrees/
 
 # Editor
 .vscode/

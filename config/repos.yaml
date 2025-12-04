@@ -1,0 +1,28 @@
+# Repository definitions for hammer-bench
+#
+# Each repository can define:
+#   url: GitHub URL (required)
+#   default_ref: Default branch/tag to use (default: master)
+#   patch_file: File to patch for set_library_suggestions (optional)
+#              Only needed if using custom suggestion providers
+#
+# The worktree will be created at worktrees/<repo_name>/
+
+repos:
+  # Main Mathlib repository
+  mathlib4:
+    url: https://github.com/leanprover-community/mathlib4.git
+    default_ref: master
+    patch_file: Mathlib/Init.lean
+
+  # Nightly testing fork (has hammer_measurements branch)
+  mathlib4-nightly-testing:
+    url: https://github.com/leanprover-community/mathlib4-nightly-testing.git
+    default_ref: nightly-testing
+    patch_file: Mathlib/Init.lean
+
+  # Example downstream project (commented out)
+  # my-project:
+  #   url: https://github.com/user/my-lean-project.git
+  #   default_ref: main
+  #   patch_file: MyProject/Init.lean  # or null if no patching needed
