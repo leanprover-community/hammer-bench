@@ -135,7 +135,17 @@ def create_parser() -> argparse.ArgumentParser:
         "--days",
         type=int,
         default=30,
-        help="Remove runs older than this many days",
+        help="Remove runs older than this many days (default: 30)",
+    )
+    cleanup_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be deleted without actually deleting",
+    )
+    cleanup_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Skip confirmation prompt",
     )
 
     # selftest command
@@ -147,6 +157,12 @@ def create_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Show what would be run without actually running",
+    )
+    selftest_parser.add_argument(
+        "--source",
+        type=str,
+        default=None,
+        help="Override the test source (default: kim-em/mathlib4@feat/tryAtEachStepFromEnv)",
     )
 
     return parser

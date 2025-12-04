@@ -510,16 +510,106 @@ def cmd_check_base(args) -> int:
 
 
 def cmd_cleanup(args) -> int:
-    """Clean up old runs."""
-    print(f"Cleanup command not yet implemented (would remove runs older than {args.days} days)")
-    return 1
+    """Clean up old runs older than specified number of days."""
+    import shutil
+    from datetime import timedelta
+
+    runs_dir = get_runs_dir()
+    if not runs_dir.exists():
+        print("No runs directory found")
+        return 0
+
+    cutoff_date = datetime.now() - timedelta(days=args.days)
+
+    runs_to_delete = []
+    runs_to_keep = []
+    incomplete_runs = []
+
+    for run_dir in sorted(runs_dir.iterdir()):
+        if not run_dir.is_dir():
+            continue
+
+        metadata_file = run_dir / "metadata.json"
+
+        # Check for incomplete runs (no metadata yet)
+        if not metadata_file.exists():
+            incomplete_runs.append(run_dir)
+            continue
+
+        # Load metadata
+        with open(metadata_file) as f:
+            metadata = json.load(f)
+
+        # Use completed_at if available, else started_at
+        timestamp_str = metadata.get("completed_at") or metadata.get("started_at")
+        if not timestamp_str:
+            incomplete_runs.append(run_dir)
+            continue
+
+        run_time = datetime.fromisoformat(timestamp_str)
+
+        # Check if run is older than cutoff
+        if run_time < cutoff_date:
+            runs_to_delete.append((run_dir, run_time, metadata))
+        else:
+            runs_to_keep.append((run_dir, run_time, metadata))
+
+    # Report what we found
+    print(f"Cleanup runs older than {args.days} days (before {cutoff_date.date()})")
+    print()
+    print(f"Summary:")
+    print(f"  Runs to delete: {len(runs_to_delete)}")
+    print(f"  Runs to keep: {len(runs_to_keep)}")
+    if incomplete_runs:
+        print(f"  Incomplete runs (skipping): {len(incomplete_runs)}")
+    print()
+
+    if not runs_to_delete:
+        print("No runs to delete")
+        return 0
+
+    # Show what would be deleted
+    if runs_to_delete:
+        print("Runs to delete:")
+        for run_dir, run_time, metadata in runs_to_delete:
+            status = metadata.get("status", "unknown")
+            msg_count = metadata.get("message_count", 0)
+            print(f"  {run_dir.name} [{status}] {msg_count} messages ({run_time.date()})")
+        print()
+
+    # If dry-run, stop here
+    if args.dry_run:
+        print("(dry-run mode - no files deleted)")
+        return 0
+
+    # Confirm before deleting (unless --force)
+    if not args.force:
+        if sys.stdin.isatty():
+            print(f"Delete {len(runs_to_delete)} runs? (y/N): ", end="", flush=True)
+            response = input().strip().lower()
+            if response != 'y':
+                print("Cancelled")
+                return 0
+        else:
+            print("Non-interactive mode: use --force to delete without confirmation")
+            return 0
+
+    # Delete runs
+    deleted_size = 0
+    for run_dir, run_time, metadata in runs_to_delete:
+        size = sum(f.stat().st_size for f in run_dir.rglob('*') if f.is_file())
+        shutil.rmtree(run_dir)
+        deleted_size += size
+
+    print(f"Deleted {len(runs_to_delete)} runs, freed {deleted_size / 1024:.1f}KB")
+    return 0
 
 
 # Self-test configuration
-# Uses the PR branch with tryAtEachStepFromEnv linter
-# PR: https://github.com/leanprover-community/mathlib4/pull/32415
-# TODO: Update to mathlib4@master once PR is merged
-SELFTEST_SOURCE = "kim-em/mathlib4@feat/tryAtEachStepFromEnv"
+# Uses a branch with tryAtEachStepFromEnv linter (not yet in mainline mathlib4)
+# Original PR: https://github.com/leanprover-community/mathlib4/pull/32415 (closed)
+# Can be overridden with --source argument
+DEFAULT_SELFTEST_SOURCE = "kim-em/mathlib4@feat/tryAtEachStepFromEnv"
 SELFTEST_TESTS = [
     # (preset, targets, description)
     ("omega", "arithmetic_test", "omega on Nat.Basic"),
@@ -544,8 +634,9 @@ def cmd_selftest(args) -> int:
     print("=" * 60)
     print()
 
-    # Parse the source spec
-    source = SourceSpec.parse(SELFTEST_SOURCE)
+    # Parse the source spec (use CLI argument or default)
+    source_str = args.source if args.source else DEFAULT_SELFTEST_SOURCE
+    source = SourceSpec.parse(source_str)
     print(f"Test source: {source}")
     print()
 
@@ -579,8 +670,9 @@ def cmd_selftest(args) -> int:
                 # Override timeout for quick tests
                 config.build_timeout_hours = 0.5  # 30 minutes max
 
-                # Execute the run
-                metadata = execute_run(config, dry_run=args.dry_run, source=source)
+                # Execute the run (use temp directory to avoid polluting global runs)
+                metadata = execute_run(config, dry_run=args.dry_run, source=source,
+                                       runs_dir=temp_runs_path)
 
                 if args.dry_run:
                     results.append((description, "SKIP", "dry run"))
@@ -615,8 +707,13 @@ def cmd_selftest(args) -> int:
 
                     # Load actual messages
                     actual_messages = set()
-                    run_dir = get_runs_dir() / metadata.run_id
-                    with open(run_dir / "messages.jsonl") as f:
+                    run_dir = temp_runs_path / metadata.run_id
+                    messages_file = run_dir / "messages.jsonl"
+                    if not messages_file.exists():
+                        results.append((description, "FAIL", "messages.jsonl not found"))
+                        all_passed = False
+                        continue
+                    with open(messages_file) as f:
                         for line in f:
                             line = line.strip()
                             if not line:  # Skip empty lines

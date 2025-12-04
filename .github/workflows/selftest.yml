@@ -22,7 +22,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install pyyaml
+        run: pip install -r requirements.txt
 
       - name: Install elan
         run: |
@@ -32,13 +32,13 @@ jobs:
       - name: Initialize hammer-bench
         run: |
           # Create hammer-bench directory structure
-          mkdir -p ~/hammer-bench/config ~/hammer-bench/runs
+          mkdir -p ~/hammer-bench/config ~/hammer-bench/runs ~/hammer-bench/worktrees
 
           # Copy config files
           cp -r config/* ~/hammer-bench/config/
 
           # Clone mathlib4 (minimal clone for faster setup)
-          git clone --depth 1 https://github.com/leanprover-community/mathlib4.git ~/hammer-bench/mathlib4
+          git clone --depth 1 https://github.com/leanprover-community/mathlib4.git ~/hammer-bench/worktrees/mathlib4
 
       - name: Run self-test (dry run)
         run: |
@@ -47,13 +47,13 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
 
-      # Uncomment to run actual tests (takes longer)
-      # - name: Run self-test
-      #   run: |
-      #     cd ~/hammer-bench
-      #     python3 -m scripts selftest
-      #   env:
-      #     PYTHONPATH: ${{ github.workspace }}
+      - name: Run self-test
+        timeout-minutes: 30
+        run: |
+          cd ~/hammer-bench
+          python3 -m scripts selftest
+        env:
+          PYTHONPATH: ${{ github.workspace }}
 
   lint:
     runs-on: ubuntu-latest
@@ -68,7 +68,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install pyyaml
+        run: pip install -r requirements.txt
 
       - name: Check Python syntax
         run: python3 -m py_compile scripts/*.py

@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import time
+import tomllib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +17,13 @@ try:
     import yaml
 except ImportError:
     print("Error: pyyaml is required. Set up virtual environment:", file=sys.stderr)
+    print("  python3 -m venv .venv && .venv/bin/pip install -r requirements.txt", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    import tomli_w
+except ImportError:
+    print("Error: tomli_w is required. Set up virtual environment:", file=sys.stderr)
     print("  python3 -m venv .venv && .venv/bin/pip install -r requirements.txt", file=sys.stderr)
     sys.exit(1)
 
@@ -539,10 +547,16 @@ def _patch_lakefile_lean(lakefile: Path, linter_option: str, fraction: int) -> N
 
 
 def _patch_lakefile_toml(lakefile: Path, linter_option: str, fraction: int) -> None:
-    """Patch a lakefile.toml by adding linter options to [leanOptions] section."""
+    """Patch a lakefile.toml by adding linter options to [leanOptions] section.
+
+    Uses tomllib to properly parse TOML and handles all cases:
+    - Existing [leanOptions] section
+    - Inline leanOptions = {...} format
+    - No leanOptions at all
+    """
     content = lakefile.read_text()
 
-    # Remove any existing patch
+    # Remove any existing patch first
     content = _remove_hammer_bench_patch(content, "# HAMMER_BENCH_LINTER_START", "# HAMMER_BENCH_LINTER_END")
 
     # Options to add (with weak. prefix for use during lake build)
@@ -551,28 +565,39 @@ def _patch_lakefile_toml(lakefile: Path, linter_option: str, fraction: int) -> N
 "weak.linter.tacticAnalysis.tryAtEachStep.fraction" = {fraction}
 # HAMMER_BENCH_LINTER_END"""
 
-    # Case 1: Has [leanOptions] section - insert after section header
+    # Parse TOML to understand the structure
+    try:
+        parsed = tomllib.loads(content)
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f"Invalid TOML in {lakefile}: {e}")
+
+    # Case 1: Has [leanOptions] section - insert after section header (preserves formatting)
     if "[leanOptions]" in content:
         content = content.replace("[leanOptions]", f"[leanOptions]\n{patch_lines}")
         lakefile.write_text(content)
         return
 
-    # Case 2: Has inline leanOptions = {...} - convert to section style
-    import re
-    inline_pattern = r'leanOptions\s*=\s*\{([^}]*)\}'
-    match = re.search(inline_pattern, content)
-    if match:
-        # Extract existing options from inline format
-        inline_opts = match.group(1).strip()
-        # Convert inline k = v pairs to TOML section format
+    # Case 2: Has inline leanOptions = {...} - convert to section using proper TOML parsing
+    if "leanOptions" in parsed:
+        existing_opts = parsed["leanOptions"]
+        # Build section with existing options properly formatted
         section_lines = ["[leanOptions]", patch_lines]
-        if inline_opts:
-            # Parse inline options (simple k = v pairs separated by commas)
-            for opt in inline_opts.split(","):
-                opt = opt.strip()
-                if opt:
-                    section_lines.append(opt)
-        # Replace inline with section
+        for key, value in existing_opts.items():
+            # Format the value properly for TOML
+            if isinstance(value, bool):
+                section_lines.append(f'"{key}" = {str(value).lower()}')
+            elif isinstance(value, str):
+                section_lines.append(f'"{key}" = "{value}"')
+            elif isinstance(value, int):
+                section_lines.append(f'"{key}" = {value}')
+            else:
+                # For complex values, use tomli_w to format
+                section_lines.append(f'"{key}" = {tomli_w.dumps({"_": value}).split("=", 1)[1].strip()}')
+
+        # Remove the inline leanOptions line and replace with section
+        import re
+        # Match inline table format: leanOptions = { ... } (possibly multiline)
+        inline_pattern = r'leanOptions\s*=\s*\{[^}]*\}'
         content = re.sub(inline_pattern, "\n".join(section_lines), content)
         lakefile.write_text(content)
         return
@@ -632,18 +657,21 @@ def unpatch_lakefile_linter(repo_dir: Path) -> None:
 
 
 def execute_run(config: RunConfig, dry_run: bool = False,
-                source: Optional[SourceSpec] = None) -> Optional[RunMetadata]:
+                source: Optional[SourceSpec] = None,
+                runs_dir: Optional[Path] = None) -> Optional[RunMetadata]:
     """Execute a single benchmark run.
 
     Args:
         config: Run configuration
         dry_run: If True, just print what would be done
         source: Optional source specification (recorded in metadata)
+        runs_dir: Optional custom runs directory (defaults to ~/.hammer-bench/runs)
 
     Returns:
         RunMetadata for the completed run, or None on failure
     """
-    runs_dir = get_runs_dir()
+    if runs_dir is None:
+        runs_dir = get_runs_dir()
 
     # Determine the repo directory and config
     if source:
@@ -724,11 +752,13 @@ def execute_run(config: RunConfig, dry_run: bool = False,
 
         # Run lake clean
         print("Running lake clean...")
-        subprocess.run(
+        clean_result = subprocess.run(
             ["lake", "clean"],
             cwd=repo_dir,
             capture_output=True,
         )
+        if clean_result.returncode != 0:
+            print(f"Warning: lake clean failed: {clean_result.stderr.decode()}", file=sys.stderr)
 
         # Run lake build with timeout
         print(f"Running lake build (timeout: {config.build_timeout_hours}h)...")
