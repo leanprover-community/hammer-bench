@@ -42,3 +42,18 @@ quick_test:
   description: Minimal targets for quick testing
   targets:
     - Mathlib.Logic.Basic
+
+sample:
+  description: Diverse sample across 11 Mathlib areas (~22% of Mathlib)
+  targets:
+    - Mathlib.Combinatorics.SimpleGraph.Basic
+    - Mathlib.SetTheory.Ordinal.Basic
+    - Mathlib.Computability.TuringMachine
+    - Mathlib.ModelTheory.Basic
+    - Mathlib.NumberTheory.Harmonic.Defs
+    - Mathlib.RepresentationTheory.Maschke
+    - Mathlib.Probability.Kernel.IonescuTulcea.Maps
+    - Mathlib.AlgebraicGeometry.EllipticCurve.Weierstrass
+    - Mathlib.Dynamics.FixedPoints.Basic
+    - Mathlib.LinearAlgebra.Matrix.Defs
+    - Mathlib.Analysis.SpecialFunctions.Pow.Real
