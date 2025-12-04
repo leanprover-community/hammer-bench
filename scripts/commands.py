@@ -516,9 +516,10 @@ def cmd_cleanup(args) -> int:
 
 
 # Self-test configuration
-# TODO: Update this once upstream changes are merged
-# Use short repo name from config/repos.yaml
-SELFTEST_SOURCE = "mathlib4-nightly-testing@hammer_measurements"
+# Uses the PR branch with tryAtEachStepFromEnv linter
+# PR: https://github.com/leanprover-community/mathlib4/pull/32415
+# TODO: Update to mathlib4@master once PR is merged
+SELFTEST_SOURCE = "kim-em/mathlib4@feat/tryAtEachStepFromEnv"
 SELFTEST_TESTS = [
     # (preset, targets, description)
     ("omega", "quick_test", "omega on Logic.Basic"),

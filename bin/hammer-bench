@@ -5,4 +5,9 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HAMMER_BENCH_DIR="$(dirname "$SCRIPT_DIR")"
 
-exec python3 -m scripts "$@"
+# Use virtual environment if it exists
+if [ -f "$HAMMER_BENCH_DIR/.venv/bin/python3" ]; then
+    exec "$HAMMER_BENCH_DIR/.venv/bin/python3" -m scripts "$@"
+else
+    exec python3 -m scripts "$@"
+fi

@@ -5,15 +5,23 @@ A tool for systematically benchmarking Lean 4 "hammer" tactics (grind, simp_all,
 ## Quick Start
 
 ### Prerequisites
-- Python 3.10+ with pyyaml (`pip install pyyaml`)
+- Python 3.10+
 - Git
 - Elan/Lake (Lean toolchain)
 
 ### Setup
 ```bash
 cd ~/hammer-bench
+
+# Set up Python virtual environment (required)
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+# Initialize mathlib4 worktree
 ./bin/hammer-bench init
 ```
+
+The `bin/hammer-bench` script automatically uses `.venv` if it exists.
 
 This clones mathlib4 to `~/hammer-bench/worktrees/mathlib4/`.
 

@@ -15,7 +15,8 @@ from typing import Optional
 try:
     import yaml
 except ImportError:
-    print("Error: pyyaml is required. Install with: pip install pyyaml", file=sys.stderr)
+    print("Error: pyyaml is required. Set up virtual environment:", file=sys.stderr)
+    print("  python3 -m venv .venv && .venv/bin/pip install -r requirements.txt", file=sys.stderr)
     sys.exit(1)
 
 from .core import (
@@ -126,6 +127,13 @@ def checkout_source(source: SourceSpec, repo_dir: Optional[Path] = None) -> Path
             ["git", "clone", url, str(repo_dir)],
             check=True,
         )
+        # Fetch the specific ref (clone only gets default branch)
+        print(f"Fetching {source.ref}...")
+        subprocess.run(
+            ["git", "fetch", "origin", source.ref],
+            cwd=repo_dir,
+            check=True,
+        )
     else:
         # Add remote if needed (use repo name as remote name)
         remote_name = source.repo.replace("/", "_")
@@ -153,7 +161,7 @@ def checkout_source(source: SourceSpec, repo_dir: Optional[Path] = None) -> Path
     # Checkout the ref
     print(f"Checking out {source.ref}...")
     subprocess.run(
-        ["git", "checkout", "FETCH_HEAD", "--detach"],
+        ["git", "checkout", "--detach", "FETCH_HEAD"],
         cwd=repo_dir,
         check=True,
     )
@@ -383,15 +391,12 @@ def build_lake_command(config: RunConfig) -> tuple:
         tactic = "try simp_all? +suggestions"
         label = "simp_all +suggestions"
 
-    # Use the generic env var mechanism for all tactics
+    # Set environment variables for the tactic to run
+    # Note: The linter option is enabled via lakefile patching in execute_run()
+    # The -K flags are for Lake config, not Lean options, so we don't use them here
     if tactic:
-        cmd.append("-Klinter.tacticAnalysis.tryAtEachStepFromEnv=true")
         env_vars["TRY_AT_EACH_STEP_TACTIC"] = tactic
         env_vars["TRY_AT_EACH_STEP_LABEL"] = label
-
-    # Add fraction if not 1
-    if linters.fraction != 1:
-        cmd.append(f"-Klinter.tacticAnalysis.tryAtEachStep.fraction={linters.fraction}")
 
     return cmd, env_vars
 
@@ -494,6 +499,81 @@ def unpatch_suggestion_provider(repo_dir: Path, patch_file: Optional[str] = None
     init_file.write_text("\n".join(new_lines))
 
 
+def patch_lakefile_linter(repo_dir: Path, linter_option: str, fraction: int = 1) -> Path:
+    """Patch lakefile.lean to enable a linter option.
+
+    Adds the linter option to mathlibOnlyLinters array.
+
+    Args:
+        repo_dir: Path to repository directory
+        linter_option: The linter option name (e.g., "linter.tacticAnalysis.tryAtEachStepFromEnv")
+        fraction: Sampling fraction (1 = all, 10 = 10%, etc.)
+
+    Returns:
+        Path to the patched lakefile
+    """
+    lakefile = repo_dir / "lakefile.lean"
+    if not lakefile.exists():
+        raise FileNotFoundError(f"lakefile.lean not found at {lakefile}")
+
+    content = lakefile.read_text()
+
+    # Remove any existing hammer-bench patch
+    if "-- HAMMER_BENCH_LINTER_START" in content:
+        lines = content.split("\n")
+        new_lines = []
+        skip = False
+        for line in lines:
+            if "-- HAMMER_BENCH_LINTER_START" in line:
+                skip = True
+            elif "-- HAMMER_BENCH_LINTER_END" in line:
+                skip = False
+            elif not skip:
+                new_lines.append(line)
+        content = "\n".join(new_lines)
+
+    # Find mathlibOnlyLinters and insert our options
+    # We insert right after the opening #[
+    patch = f"""  -- HAMMER_BENCH_LINTER_START
+  ⟨`{linter_option}, true⟩,
+  ⟨`linter.tacticAnalysis.tryAtEachStep.fraction, .ofNat {fraction}⟩,
+  -- HAMMER_BENCH_LINTER_END"""
+
+    # Find the mathlibOnlyLinters definition and insert after #[
+    marker = "abbrev mathlibOnlyLinters : Array LeanOption := #["
+    if marker not in content:
+        raise ValueError(f"Could not find '{marker}' in lakefile.lean")
+
+    content = content.replace(marker, marker + "\n" + patch)
+
+    lakefile.write_text(content)
+    return lakefile
+
+
+def unpatch_lakefile_linter(repo_dir: Path) -> None:
+    """Remove the linter patch from lakefile.lean."""
+    lakefile = repo_dir / "lakefile.lean"
+    if not lakefile.exists():
+        return
+
+    content = lakefile.read_text()
+    if "-- HAMMER_BENCH_LINTER_START" not in content:
+        return
+
+    lines = content.split("\n")
+    new_lines = []
+    skip = False
+    for line in lines:
+        if "-- HAMMER_BENCH_LINTER_START" in line:
+            skip = True
+        elif "-- HAMMER_BENCH_LINTER_END" in line:
+            skip = False
+        elif not skip:
+            new_lines.append(line)
+
+    lakefile.write_text("\n".join(new_lines))
+
+
 def execute_run(config: RunConfig, dry_run: bool = False,
                 source: Optional[SourceSpec] = None) -> Optional[RunMetadata]:
     """Execute a single benchmark run.
@@ -569,6 +649,7 @@ def execute_run(config: RunConfig, dry_run: bool = False,
 
     # Patch suggestion provider if needed
     patched_file = None
+    patched_lakefile = False
     try:
         if config.suggestion_provider and config.suggestion_provider.command:
             if patch_file:
@@ -576,6 +657,13 @@ def execute_run(config: RunConfig, dry_run: bool = False,
                 patched_file = patch_suggestion_provider(repo_dir, config.suggestion_provider, patch_file)
             else:
                 print(f"Warning: No patch_file configured for this repo, skipping suggestion provider patch")
+
+        # Patch lakefile to enable linter
+        if config.linters.customTactic:
+            linter_option = "linter.tacticAnalysis.tryAtEachStepFromEnv"
+            print(f"Patching lakefile.lean to enable {linter_option}")
+            patch_lakefile_linter(repo_dir, linter_option, config.linters.fraction)
+            patched_lakefile = True
 
         # Run lake clean
         print("Running lake clean...")
@@ -661,3 +749,6 @@ def execute_run(config: RunConfig, dry_run: bool = False,
         if patched_file:
             print("Removing suggestion provider patch...")
             unpatch_suggestion_provider(repo_dir, patch_file)
+        if patched_lakefile:
+            print("Removing lakefile linter patch...")
+            unpatch_lakefile_linter(repo_dir)

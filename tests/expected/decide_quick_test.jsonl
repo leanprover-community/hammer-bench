@@ -1,0 +1,2 @@
+{"file": "Mathlib/Tactic/AdaptationNote.lean", "row": 69, "col": 2, "original": "#adaptation_note /-- This is a test -/", "replacement": "decide", "time_ms": 1}
+{"file": "Mathlib/Tactic/AdaptationNote.lean", "row": 70, "col": 2, "original": "trivial", "replacement": "decide", "time_ms": 0}

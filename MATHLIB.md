@@ -6,7 +6,7 @@ tool can target any commit.
 
 ## Status
 
-- [ ] PR opened: (link)
+- [x] PR opened: https://github.com/leanprover-community/mathlib4/pull/32415
 - [ ] PR merged: (commit hash)
 - [ ] Minimum supported commit: (commit hash)
 
