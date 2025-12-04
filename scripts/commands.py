@@ -222,8 +222,7 @@ def cmd_list(args) -> int:
     for run_dir in runs:
         metadata_file = run_dir / "metadata.json"
         if metadata_file.exists():
-            import json
-            with open(metadata_file) as f:
+            with open(metadata_file, encoding="utf-8") as f:
                 metadata = json.load(f)
             status = metadata.get("status", "unknown")
             duration = metadata.get("duration_seconds")
@@ -249,8 +248,7 @@ def cmd_show(args) -> int:
         print(f"Metadata not found for run: {args.run_id}", file=sys.stderr)
         return 1
 
-    import json
-    with open(metadata_file) as f:
+    with open(metadata_file, encoding="utf-8") as f:
         metadata = json.load(f)
 
     print(f"Run: {metadata['run_id']}")
@@ -283,7 +281,7 @@ def cmd_compare(args) -> int:
     # Load messages from both runs
     def load_messages(run_dir):
         messages = {}
-        with open(run_dir / "messages.jsonl") as f:
+        with open(run_dir / "messages.jsonl", encoding="utf-8") as f:
             for line in f:
                 msg = Message.from_dict(json.loads(line))
                 # Key by location + original tactic
@@ -297,9 +295,9 @@ def cmd_compare(args) -> int:
     msgs2 = load_messages(run2_dir)
 
     # Load metadata
-    with open(run1_dir / "metadata.json") as f:
+    with open(run1_dir / "metadata.json", encoding="utf-8") as f:
         meta1 = json.load(f)
-    with open(run2_dir / "metadata.json") as f:
+    with open(run2_dir / "metadata.json", encoding="utf-8") as f:
         meta2 = json.load(f)
 
     # Compute statistics
@@ -389,9 +387,9 @@ def cmd_validate(args) -> int:
             return 1
 
     # Load metadata
-    with open(run1_dir / "metadata.json") as f:
+    with open(run1_dir / "metadata.json", encoding="utf-8") as f:
         meta1 = json.load(f)
-    with open(run2_dir / "metadata.json") as f:
+    with open(run2_dir / "metadata.json", encoding="utf-8") as f:
         meta2 = json.load(f)
 
     # Check if configurations match
@@ -418,7 +416,7 @@ def cmd_validate(args) -> int:
     def load_messages_set(run_dir):
         """Load messages as a set of (file, row, col, original, replacement) tuples."""
         messages = set()
-        with open(run_dir / "messages.jsonl") as f:
+        with open(run_dir / "messages.jsonl", encoding="utf-8") as f:
             for line in f:
                 msg = json.loads(line)
                 # Ignore timing for consistency check
@@ -446,7 +444,11 @@ def cmd_validate(args) -> int:
         print("PASS: Runs are perfectly consistent")
         return 0
     else:
-        consistency = len(common) / max(len(msgs1), len(msgs2)) * 100
+        max_msgs = max(len(msgs1), len(msgs2))
+        if max_msgs == 0:
+            print("PASS: Both runs have zero messages (trivially consistent)")
+            return 0
+        consistency = len(common) / max_msgs * 100
         print(f"FAIL: Runs are not consistent ({consistency:.2f}% agreement)")
         print()
 
@@ -474,7 +476,7 @@ def cmd_rebase(args) -> int:
     print(f"Rebasing to {args.tag}...")
 
     # Fetch latest
-    subprocess.run(["git", "fetch", "--all", "--tags"], cwd=mathlib_dir)
+    subprocess.run(["git", "fetch", "--all", "--tags"], cwd=mathlib_dir, check=True)
 
     # Checkout the new base
     result = subprocess.run(
@@ -537,7 +539,7 @@ def cmd_cleanup(args) -> int:
             continue
 
         # Load metadata
-        with open(metadata_file) as f:
+        with open(metadata_file, encoding="utf-8") as f:
             metadata = json.load(f)
 
         # Use completed_at if available, else started_at
@@ -695,7 +697,7 @@ def cmd_selftest(args) -> int:
                 if expected_file.exists():
                     # Load expected messages
                     expected_messages = set()
-                    with open(expected_file) as f:
+                    with open(expected_file, encoding="utf-8") as f:
                         for line in f:
                             line = line.strip()
                             if not line:  # Skip empty lines
@@ -713,7 +715,7 @@ def cmd_selftest(args) -> int:
                         results.append((description, "FAIL", "messages.jsonl not found"))
                         all_passed = False
                         continue
-                    with open(messages_file) as f:
+                    with open(messages_file, encoding="utf-8") as f:
                         for line in f:
                             line = line.strip()
                             if not line:  # Skip empty lines

@@ -9,6 +9,9 @@ import os
 import socket
 import subprocess
 
+# Constants
+GIT_HASH_DISPLAY_LENGTH = 12
+
 
 @dataclass
 class LinterConfig:
@@ -173,7 +176,7 @@ class RunConfig:
     build_timeout_hours: float = 6.0
     # Target collection name (e.g., "ordered_field") and resolved targets
     target_collection: str = "all"
-    targets: list = None  # List of lake build targets, defaults to ["Mathlib"]
+    targets: list[str] | None = None  # List of lake build targets, defaults to ["Mathlib"]
 
     def __post_init__(self):
         if self.targets is None:
@@ -298,8 +301,14 @@ class RunMetadata:
 
 
 def get_hammer_bench_dir() -> Path:
-    """Get the hammer-bench directory."""
-    return Path.home() / "hammer-bench"
+    """Get the hammer-bench directory (auto-detected from script location).
+
+    Can be overridden via HAMMER_BENCH_DIR environment variable.
+    """
+    if env_dir := os.environ.get("HAMMER_BENCH_DIR"):
+        return Path(env_dir)
+    # Auto-detect: this script is at hammer-bench/scripts/core.py
+    return Path(__file__).resolve().parent.parent
 
 
 def get_worktrees_dir() -> Path:
@@ -366,21 +375,28 @@ def get_git_ref(repo_path: Path) -> str:
         return result.stdout.strip()
 
     # Fall back to commit hash
-    return get_git_commit(repo_path)[:12]
+    return get_git_commit(repo_path)[:GIT_HASH_DISPLAY_LENGTH]
 
 
 def get_lean_toolchain(repo_path: Path) -> str:
     """Get the Lean toolchain version from lean-toolchain file."""
     toolchain_file = repo_path / "lean-toolchain"
     if toolchain_file.exists():
-        return toolchain_file.read_text().strip()
+        return toolchain_file.read_text(encoding="utf-8").strip()
     return "unknown"
 
 
-def generate_run_id(preset_name: str) -> str:
-    """Generate a unique run ID."""
+def generate_run_id(preset_name: str, repo_dir: Path | None = None) -> str:
+    """Generate a unique run ID.
+
+    Args:
+        preset_name: Name of the preset being run
+        repo_dir: Repository directory to get commit from (defaults to mathlib4)
+    """
     timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    commit_short = get_git_commit(get_mathlib_dir())[:7] if get_mathlib_dir().exists() else "unknown"
+    if repo_dir is None:
+        repo_dir = get_mathlib_dir()
+    commit_short = get_git_commit(repo_dir)[:7] if repo_dir.exists() else "unknown"
     return f"{timestamp}_{preset_name}_{commit_short}"
 
 
@@ -388,7 +404,7 @@ def atomic_write_json(path: Path, data: dict) -> None:
     """Write JSON data atomically (write to temp, then rename)."""
     temp_path = path.with_suffix(f".{os.getpid()}.tmp")
     try:
-        with open(temp_path, "w") as f:
+        with open(temp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
             f.flush()
             os.fsync(f.fileno())

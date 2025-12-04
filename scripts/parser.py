@@ -70,8 +70,6 @@ def parse_build_output_streaming(output_lines, callback):
         output_lines: Iterator of lines from build output
         callback: Function to call with each Message
     """
-    buffer = ""
-
     for line in output_lines:
         # Check if this line contains a replacement message
         if "can be replaced with" in line:

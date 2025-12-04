@@ -27,6 +27,13 @@ except ImportError:
     print("  python3 -m venv .venv && .venv/bin/pip install -r requirements.txt", file=sys.stderr)
     sys.exit(1)
 
+try:
+    from filelock import FileLock
+except ImportError:
+    print("Error: filelock is required. Set up virtual environment:", file=sys.stderr)
+    print("  python3 -m venv .venv && .venv/bin/pip install -r requirements.txt", file=sys.stderr)
+    sys.exit(1)
+
 from .core import (
     LinterConfig,
     Message,
@@ -54,7 +61,7 @@ def load_presets() -> dict:
     """Load presets from config/presets.yaml."""
     presets_file = get_hammer_bench_dir() / "config" / "presets.yaml"
     if presets_file.exists():
-        with open(presets_file) as f:
+        with open(presets_file, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     return {}
 
@@ -63,7 +70,7 @@ def load_providers() -> dict:
     """Load providers from config/providers.yaml."""
     providers_file = get_hammer_bench_dir() / "config" / "providers.yaml"
     if providers_file.exists():
-        with open(providers_file) as f:
+        with open(providers_file, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
             return data.get("providers", {})
     return {}
@@ -73,7 +80,7 @@ def load_targets() -> dict:
     """Load target collections from config/targets.yaml."""
     targets_file = get_hammer_bench_dir() / "config" / "targets.yaml"
     if targets_file.exists():
-        with open(targets_file) as f:
+        with open(targets_file, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     return {}
 
@@ -86,7 +93,7 @@ def load_repos() -> dict:
     """
     repos_file = get_hammer_bench_dir() / "config" / "repos.yaml"
     if repos_file.exists():
-        with open(repos_file) as f:
+        with open(repos_file, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
             repos_data = data.get("repos", {})
             return {
@@ -131,17 +138,23 @@ def checkout_source(source: SourceSpec, repo_dir: Optional[Path] = None) -> Path
     if not repo_dir.exists():
         # Clone the repository
         print(f"Cloning {source.repo_name} from {url}...")
-        subprocess.run(
+        result = subprocess.run(
             ["git", "clone", url, str(repo_dir)],
-            check=True,
+            capture_output=True,
+            text=True,
         )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to clone repository: {result.stderr}")
         # Fetch the specific ref (clone only gets default branch)
         print(f"Fetching {source.ref}...")
-        subprocess.run(
+        result = subprocess.run(
             ["git", "fetch", "origin", source.ref],
             cwd=repo_dir,
-            check=True,
+            capture_output=True,
+            text=True,
         )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to fetch ref {source.ref}: {result.stderr}")
     else:
         # Add remote if needed (use repo name as remote name)
         remote_name = source.repo.replace("/", "_")
@@ -152,27 +165,36 @@ def checkout_source(source: SourceSpec, repo_dir: Optional[Path] = None) -> Path
         )
         if result.returncode != 0:
             print(f"Adding remote {remote_name} -> {url}")
-            subprocess.run(
+            result = subprocess.run(
                 ["git", "remote", "add", remote_name, url],
                 cwd=repo_dir,
-                check=True,
+                capture_output=True,
+                text=True,
             )
+            if result.returncode != 0:
+                raise RuntimeError(f"Failed to add remote: {result.stderr}")
 
         # Fetch the ref
         print(f"Fetching {source.ref} from {remote_name}...")
-        subprocess.run(
+        result = subprocess.run(
             ["git", "fetch", remote_name, source.ref],
             cwd=repo_dir,
-            check=True,
+            capture_output=True,
+            text=True,
         )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to fetch ref {source.ref}: {result.stderr}")
 
     # Checkout the ref
     print(f"Checking out {source.ref}...")
-    subprocess.run(
+    result = subprocess.run(
         ["git", "checkout", "--detach", "FETCH_HEAD"],
         cwd=repo_dir,
-        check=True,
+        capture_output=True,
+        text=True,
     )
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to checkout FETCH_HEAD: {result.stderr}")
 
     print(f"Checked out {source} at {get_git_commit(repo_dir)[:12]}")
     return repo_dir
@@ -214,7 +236,7 @@ class QueueFile:
     path: Path
 
     def save(self) -> None:
-        """Save the queue file back to disk."""
+        """Save the queue file back to disk (with file locking)."""
         data = {
             "source": str(self.source) if self.source else None,
             "queue": [
@@ -228,12 +250,14 @@ class QueueFile:
             ],
             "completed": self.completed,
         }
-        with open(self.path, "w") as f:
-            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+        lock = FileLock(str(self.path) + ".lock")
+        with lock:
+            with open(self.path, "w", encoding="utf-8") as f:
+                yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
 
 def parse_queue_file(queue_file: Path) -> QueueFile:
-    """Parse a YAML queue file.
+    """Parse a YAML queue file (with file locking).
 
     Returns:
         QueueFile with source, entries, and completed runs
@@ -241,8 +265,10 @@ def parse_queue_file(queue_file: Path) -> QueueFile:
     if not queue_file.exists():
         return QueueFile(source=None, entries=[], completed=[], path=queue_file)
 
-    with open(queue_file) as f:
-        data = yaml.safe_load(f) or {}
+    lock = FileLock(str(queue_file) + ".lock")
+    with lock:
+        with open(queue_file, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
 
     # Parse source
     source = None
@@ -433,7 +459,7 @@ def patch_suggestion_provider(repo_dir: Path, provider: Optional[SuggestionProvi
         raise FileNotFoundError(f"{patch_file} not found at {init_file}")
 
     # Read current content
-    content = init_file.read_text()
+    content = init_file.read_text(encoding="utf-8")
 
     # Check if already patched
     if "-- HAMMER_BENCH_PROVIDER_START" in content:
@@ -469,7 +495,7 @@ set_library_suggestions {provider.command}
     lines.insert(insert_idx, patch)
     new_content = "\n".join(lines)
 
-    init_file.write_text(new_content)
+    init_file.write_text(new_content, encoding="utf-8")
     return init_file
 
 
@@ -488,7 +514,7 @@ def unpatch_suggestion_provider(repo_dir: Path, patch_file: Optional[str] = None
     if not init_file.exists():
         return
 
-    content = init_file.read_text()
+    content = init_file.read_text(encoding="utf-8")
     if "-- HAMMER_BENCH_PROVIDER_START" not in content:
         return
 
@@ -504,7 +530,7 @@ def unpatch_suggestion_provider(repo_dir: Path, patch_file: Optional[str] = None
         elif not skip:
             new_lines.append(line)
 
-    init_file.write_text("\n".join(new_lines))
+    init_file.write_text("\n".join(new_lines), encoding="utf-8")
 
 
 def _remove_hammer_bench_patch(content: str, start_marker: str, end_marker: str) -> str:
@@ -527,7 +553,7 @@ def _remove_hammer_bench_patch(content: str, start_marker: str, end_marker: str)
 
 def _patch_lakefile_lean(lakefile: Path, linter_option: str, fraction: int) -> None:
     """Patch a Mathlib-style lakefile.lean with mathlibOnlyLinters array."""
-    content = lakefile.read_text()
+    content = lakefile.read_text(encoding="utf-8")
 
     # Remove any existing patch
     content = _remove_hammer_bench_patch(content, "-- HAMMER_BENCH_LINTER_START", "-- HAMMER_BENCH_LINTER_END")
@@ -543,7 +569,7 @@ def _patch_lakefile_lean(lakefile: Path, linter_option: str, fraction: int) -> N
         raise ValueError(f"Could not find '{marker}' in lakefile.lean")
 
     content = content.replace(marker, marker + "\n" + patch)
-    lakefile.write_text(content)
+    lakefile.write_text(content, encoding="utf-8")
 
 
 def _patch_lakefile_toml(lakefile: Path, linter_option: str, fraction: int) -> None:
@@ -554,7 +580,7 @@ def _patch_lakefile_toml(lakefile: Path, linter_option: str, fraction: int) -> N
     - Inline leanOptions = {...} format
     - No leanOptions at all
     """
-    content = lakefile.read_text()
+    content = lakefile.read_text(encoding="utf-8")
 
     # Remove any existing patch first
     content = _remove_hammer_bench_patch(content, "# HAMMER_BENCH_LINTER_START", "# HAMMER_BENCH_LINTER_END")
@@ -574,7 +600,7 @@ def _patch_lakefile_toml(lakefile: Path, linter_option: str, fraction: int) -> N
     # Case 1: Has [leanOptions] section - insert after section header (preserves formatting)
     if "[leanOptions]" in content:
         content = content.replace("[leanOptions]", f"[leanOptions]\n{patch_lines}")
-        lakefile.write_text(content)
+        lakefile.write_text(content, encoding="utf-8")
         return
 
     # Case 2: Has inline leanOptions = {...} - convert to section using proper TOML parsing
@@ -599,7 +625,7 @@ def _patch_lakefile_toml(lakefile: Path, linter_option: str, fraction: int) -> N
         # Match inline table format: leanOptions = { ... } (possibly multiline)
         inline_pattern = r'leanOptions\s*=\s*\{[^}]*\}'
         content = re.sub(inline_pattern, "\n".join(section_lines), content)
-        lakefile.write_text(content)
+        lakefile.write_text(content, encoding="utf-8")
         return
 
     # Case 3: No leanOptions at all - add new section before first [[require]] or at end
@@ -608,7 +634,7 @@ def _patch_lakefile_toml(lakefile: Path, linter_option: str, fraction: int) -> N
         content = content.replace("[[require]]", f"{section}\n[[require]]", 1)
     else:
         content = content.rstrip() + "\n" + section
-    lakefile.write_text(content)
+    lakefile.write_text(content, encoding="utf-8")
 
 
 def patch_lakefile_linter(repo_dir: Path, linter_option: str, fraction: int = 1) -> Path:
@@ -650,10 +676,10 @@ def unpatch_lakefile_linter(repo_dir: Path) -> None:
     ]:
         if not lakefile.exists():
             continue
-        content = lakefile.read_text()
+        content = lakefile.read_text(encoding="utf-8")
         if start_marker in content:
             content = _remove_hammer_bench_patch(content, start_marker, end_marker)
-            lakefile.write_text(content)
+            lakefile.write_text(content, encoding="utf-8")
 
 
 def execute_run(config: RunConfig, dry_run: bool = False,
@@ -685,10 +711,10 @@ def execute_run(config: RunConfig, dry_run: bool = False,
 
     if not repo_dir.exists():
         print(f"Error: Repository not initialized at {repo_dir}.", file=sys.stderr)
-        print("Run 'hammer-bench init' or specify a source with #source: directive.", file=sys.stderr)
+        print("Run 'hammer-bench init' or set 'source:' in queue.yaml.", file=sys.stderr)
         return None
 
-    run_id = generate_run_id(config.preset_name)
+    run_id = generate_run_id(config.preset_name, repo_dir)
     run_dir = runs_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -798,12 +824,12 @@ def execute_run(config: RunConfig, dry_run: bool = False,
 
         # Save build log (compressed)
         log_path = run_dir / "build.log.gz"
-        with gzip.open(log_path, "wt") as f:
+        with gzip.open(log_path, "wt", encoding="utf-8") as f:
             f.write(output)
 
         # Save messages as JSONL
         messages_path = run_dir / "messages.jsonl"
-        with open(messages_path, "w") as f:
+        with open(messages_path, "w", encoding="utf-8") as f:
             for msg in messages:
                 f.write(json.dumps(msg.to_dict()) + "\n")
 
