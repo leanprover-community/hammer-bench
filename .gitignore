@@ -21,3 +21,5 @@ worktrees/
 
 # OS
 .DS_Store
+nohup.out
+queue.yaml.lock

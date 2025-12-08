@@ -5,11 +5,17 @@ from typing import List, Optional, Tuple
 from .core import Message
 
 
-# Pattern to match info messages with "can be replaced with" and optional timing
-# Example: info: Mathlib/Logic/Basic.lean:47:55: `rfl` can be replaced with `grind` (2ms)
+# Pattern to match info messages with "can be replaced with", optional later steps, and optional timing
+# Examples:
+#   info: Mathlib/Logic/Basic.lean:47:55: `rfl` can be replaced with `grind` (2ms)
+#   info: Mathlib/Logic/Basic.lean:47:55: `skip` (+3 later steps) can be replaced with `grind` (2ms)
 MESSAGE_PATTERN = re.compile(
-    r'info: ([^:]+):(\d+):(\d+):[^\n]*?`([^`]+)` can be replaced with `([^`]+)`(?: \((\d+)ms\))?'
+    r'info: ([^:]+):(\d+):(\d+):[^\n]*?`([^`]+)`(?: \(\+(\d+) later steps?\))? can be replaced with `([^`]+)`(?: \((\d+)ms\))?'
 )
+
+# Pattern to match PANIC messages
+# Example: info: Mathlib/Order/Interval/Set/Pi.lean:81:0: PANIC at Lean.Meta.Grind.mkEqProofImpl ...
+PANIC_PATTERN = re.compile(r'PANIC at')
 
 
 def normalize_tactic(tactic: str) -> str:
@@ -32,6 +38,11 @@ def normalize_tactic(tactic: str) -> str:
     return tactic
 
 
+def count_panics(output: str) -> int:
+    """Count the number of PANIC messages in build output."""
+    return len(PANIC_PATTERN.findall(output))
+
+
 def parse_build_output(output: str) -> List[Message]:
     """Parse build output and extract all replacement messages.
 
@@ -44,7 +55,7 @@ def parse_build_output(output: str) -> List[Message]:
     messages = []
 
     for match in MESSAGE_PATTERN.finditer(output):
-        filepath, row, col, original, replacement, time_ms = match.groups()
+        filepath, row, col, original, later_steps, replacement, time_ms = match.groups()
 
         # Normalize the replacement tactic
         normalized_replacement = normalize_tactic(replacement)
@@ -56,6 +67,7 @@ def parse_build_output(output: str) -> List[Message]:
             original=original.strip(),
             replacement=normalized_replacement,
             time_ms=int(time_ms) if time_ms else None,
+            later_steps=int(later_steps) if later_steps else 0,
         ))
 
     return messages
@@ -75,7 +87,7 @@ def parse_build_output_streaming(output_lines, callback):
         if "can be replaced with" in line:
             match = MESSAGE_PATTERN.search(line)
             if match:
-                filepath, row, col, original, replacement, time_ms = match.groups()
+                filepath, row, col, original, later_steps, replacement, time_ms = match.groups()
                 normalized_replacement = normalize_tactic(replacement)
 
                 callback(Message(
@@ -85,6 +97,7 @@ def parse_build_output_streaming(output_lines, callback):
                     original=original.strip(),
                     replacement=normalized_replacement,
                     time_ms=int(time_ms) if time_ms else None,
+                    later_steps=int(later_steps) if later_steps else 0,
                 ))
 
 

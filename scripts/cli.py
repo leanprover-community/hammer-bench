@@ -10,7 +10,7 @@ from . import __version__
 def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
     parser = argparse.ArgumentParser(
-        prog="hammer-bench",
+        prog="bench",
         description="Hammer benchmarking tool for Mathlib",
     )
     parser.add_argument(
@@ -56,6 +56,14 @@ def create_parser() -> argparse.ArgumentParser:
     # queue clear
     queue_subparsers.add_parser("clear", help="Clear pending runs from queue")
 
+    # queue redo
+    queue_redo = queue_subparsers.add_parser("redo", help="Re-queue a completed run")
+    queue_redo.add_argument(
+        "run_id",
+        nargs="?",
+        help="Run ID to redo (default: most recent completed run)",
+    )
+
     # run command
     run_parser = subparsers.add_parser(
         "run",
@@ -94,10 +102,9 @@ def create_parser() -> argparse.ArgumentParser:
     # compare command
     compare_parser = subparsers.add_parser(
         "compare",
-        help="Compare two runs",
+        help="Compare multiple runs",
     )
-    compare_parser.add_argument("run1", help="First run ID")
-    compare_parser.add_argument("run2", help="Second run ID")
+    compare_parser.add_argument("runs", nargs='+', help="Run IDs to compare (2 or more)")
     compare_parser.add_argument(
         "--format",
         choices=["markdown", "csv", "json"],
@@ -174,8 +181,9 @@ def main(args=None):
     parsed = parser.parse_args(args)
 
     if parsed.command is None:
-        parser.print_help()
-        return 1
+        # Launch TUI when no command provided
+        from .tui.app import run_tui
+        return run_tui()
 
     # Import handlers here to avoid circular imports
     if parsed.command == "init":

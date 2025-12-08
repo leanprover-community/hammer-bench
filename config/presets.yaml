@@ -16,7 +16,8 @@ simp_all:
   description: Run simp_all at every proof step
 
 aesop:
-  customTactic: aesop
+  customTactic: try aesop
+  customTacticLabel: aesop
   fraction: 1
   timing_mode: true
   build_timeout_hours: 12

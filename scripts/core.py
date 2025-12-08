@@ -17,44 +17,26 @@ GIT_HASH_DISPLAY_LENGTH = 12
 class LinterConfig:
     """Configuration for which linters to enable.
 
-    For built-in linters, set the corresponding bool flags.
-    For custom tactics via environment variables, set customTacticLabel and customTactic.
+    Uses the generic TRY_AT_EACH_STEP_* mechanism via environment variables.
+    Set customTactic to the tactic string and optionally customTacticLabel for display.
     """
-    tryAtEachStepGrind: bool = False
-    tryAtEachStepSimpAll: bool = False
-    tryAtEachStepAesop: bool = False
-    tryAtEachStepGrindSuggestions: bool = False
-    tryAtEachStepSimpAllSuggestions: bool = False
-    # Custom tactic via TRY_AT_EACH_STEP_LABEL and TRY_AT_EACH_STEP_TACTIC env vars
-    customTacticLabel: Optional[str] = None
     customTactic: Optional[str] = None
+    customTacticLabel: Optional[str] = None
     fraction: int = 1
 
     def to_dict(self) -> dict:
-        d = {
-            "tryAtEachStepGrind": self.tryAtEachStepGrind,
-            "tryAtEachStepSimpAll": self.tryAtEachStepSimpAll,
-            "tryAtEachStepAesop": self.tryAtEachStepAesop,
-            "tryAtEachStepGrindSuggestions": self.tryAtEachStepGrindSuggestions,
-            "tryAtEachStepSimpAllSuggestions": self.tryAtEachStepSimpAllSuggestions,
-            "fraction": self.fraction,
-        }
-        if self.customTacticLabel:
-            d["customTacticLabel"] = self.customTacticLabel
+        d = {"fraction": self.fraction}
         if self.customTactic:
             d["customTactic"] = self.customTactic
+        if self.customTacticLabel:
+            d["customTacticLabel"] = self.customTacticLabel
         return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "LinterConfig":
         return cls(
-            tryAtEachStepGrind=d.get("tryAtEachStepGrind", False),
-            tryAtEachStepSimpAll=d.get("tryAtEachStepSimpAll", False),
-            tryAtEachStepAesop=d.get("tryAtEachStepAesop", False),
-            tryAtEachStepGrindSuggestions=d.get("tryAtEachStepGrindSuggestions", False),
-            tryAtEachStepSimpAllSuggestions=d.get("tryAtEachStepSimpAllSuggestions", False),
-            customTacticLabel=d.get("customTacticLabel"),
             customTactic=d.get("customTactic"),
+            customTacticLabel=d.get("customTacticLabel"),
             fraction=d.get("fraction", 1),
         )
 
@@ -217,6 +199,7 @@ class Message:
     original: str
     replacement: str
     time_ms: Optional[int] = None
+    later_steps: int = 0  # Number of later steps that would become obsolete
 
     def to_dict(self) -> dict:
         d = {
@@ -225,6 +208,7 @@ class Message:
             "col": self.col,
             "original": self.original,
             "replacement": self.replacement,
+            "later_steps": self.later_steps,
         }
         if self.time_ms is not None:
             d["time_ms"] = self.time_ms
@@ -239,6 +223,7 @@ class Message:
             original=d["original"],
             replacement=d["replacement"],
             time_ms=d.get("time_ms"),
+            later_steps=d.get("later_steps", 0),
         )
 
 
@@ -256,7 +241,9 @@ class RunMetadata:
     config: RunConfig
     status: str  # "running", "completed", "failed", "timed_out"
     source: Optional[SourceSpec] = None  # Explicit repo/ref specification
-    message_count: int = 0
+    replacement_count: int = 0  # Number of "can be replaced" messages
+    steps_replaced: int = 0  # Total proof steps replaced (sum of 1+later_steps)
+    panic_count: int = 0  # Number of PANIC messages during build
     timed_out: bool = False
     error: Optional[str] = None
 
@@ -272,7 +259,9 @@ class RunMetadata:
             "duration_seconds": self.duration_seconds,
             "config": self.config.to_dict(),
             "status": self.status,
-            "message_count": self.message_count,
+            "replacement_count": self.replacement_count,
+            "steps_replaced": self.steps_replaced,
+            "panic_count": self.panic_count,
             "timed_out": self.timed_out,
             "error": self.error,
         }
@@ -294,7 +283,9 @@ class RunMetadata:
             config=RunConfig.from_dict(d["config"]),
             status=d["status"],
             source=SourceSpec.from_dict(d["source"]) if d.get("source") else None,
-            message_count=d.get("message_count", 0),
+            replacement_count=d.get("replacement_count", 0),
+            steps_replaced=d.get("steps_replaced", 0),
+            panic_count=d.get("panic_count", 0),
             timed_out=d.get("timed_out", False),
             error=d.get("error"),
         )

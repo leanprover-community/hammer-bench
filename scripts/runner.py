@@ -1,8 +1,8 @@
 """Run execution for hammer benchmarking."""
 
-import gzip
 import json
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -54,7 +54,7 @@ from .core import (
     get_runs_dir,
     get_worktrees_dir,
 )
-from .parser import parse_build_output
+from .parser import count_panics, parse_build_output
 
 
 def load_presets() -> dict:
@@ -230,7 +230,7 @@ class QueueEntry:
 @dataclass
 class QueueFile:
     """Parsed queue file."""
-    source: Optional[SourceSpec]
+    default_source: Optional[SourceSpec]
     entries: list  # List of QueueEntry
     completed: list  # List of completed run records
     path: Path
@@ -238,7 +238,7 @@ class QueueFile:
     def save(self) -> None:
         """Save the queue file back to disk (with file locking)."""
         data = {
-            "source": str(self.source) if self.source else None,
+            "default_source": str(self.default_source) if self.default_source else None,
             "queue": [
                 e.preset if not (e.targets or e.provider or e.fraction) else {
                     "preset": e.preset,
@@ -263,17 +263,17 @@ def parse_queue_file(queue_file: Path) -> QueueFile:
         QueueFile with source, entries, and completed runs
     """
     if not queue_file.exists():
-        return QueueFile(source=None, entries=[], completed=[], path=queue_file)
+        return QueueFile(default_source=None, entries=[], completed=[], path=queue_file)
 
     lock = FileLock(str(queue_file) + ".lock")
     with lock:
         with open(queue_file, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
 
-    # Parse source
+    # Parse default source
     source = None
-    if data.get("source"):
-        source = SourceSpec.parse(data["source"])
+    if data.get("default_source"):
+        source = SourceSpec.parse(data["default_source"])
 
     # Parse queue entries
     entries = []
@@ -283,7 +283,7 @@ def parse_queue_file(queue_file: Path) -> QueueFile:
     # Keep completed as-is
     completed = data.get("completed", [])
 
-    return QueueFile(source=source, entries=entries, completed=completed, path=queue_file)
+    return QueueFile(default_source=source, entries=entries, completed=completed, path=queue_file)
 
 
 def parse_queue_entry(entry: str) -> tuple:
@@ -400,37 +400,11 @@ def build_lake_command(config: RunConfig) -> tuple:
 
     linters = config.linters
 
-    # Determine which tactic to run via the generic mechanism
-    # Priority: customTactic > specialized flags
-    tactic = None
-    label = None
-
-    if linters.customTactic:
-        tactic = linters.customTactic
-        label = linters.customTacticLabel or tactic
-    elif linters.tryAtEachStepGrind:
-        tactic = "grind"
-        label = "grind"
-    elif linters.tryAtEachStepSimpAll:
-        tactic = "simp_all"
-        label = "simp_all"
-    elif linters.tryAtEachStepAesop:
-        tactic = "aesop"
-        label = "aesop"
-    elif linters.tryAtEachStepGrindSuggestions:
-        tactic = "grind +suggestions"
-        label = "grind +suggestions"
-    elif linters.tryAtEachStepSimpAllSuggestions:
-        # Note: the `try` is needed to avoid errors in some edge cases
-        tactic = "try simp_all? +suggestions"
-        label = "simp_all +suggestions"
-
     # Set environment variables for the tactic to run
     # Note: The linter option is enabled via lakefile patching in execute_run()
-    # The -K flags are for Lake config, not Lean options, so we don't use them here
-    if tactic:
-        env_vars["TRY_AT_EACH_STEP_TACTIC"] = tactic
-        env_vars["TRY_AT_EACH_STEP_LABEL"] = label
+    if linters.customTactic:
+        env_vars["TRY_AT_EACH_STEP_TACTIC"] = linters.customTactic
+        env_vars["TRY_AT_EACH_STEP_LABEL"] = linters.customTacticLabel or linters.customTactic
 
     return cmd, env_vars
 
@@ -711,7 +685,7 @@ def execute_run(config: RunConfig, dry_run: bool = False,
 
     if not repo_dir.exists():
         print(f"Error: Repository not initialized at {repo_dir}.", file=sys.stderr)
-        print("Run 'hammer-bench init' or set 'source:' in queue.yaml.", file=sys.stderr)
+        print("Run 'hammer-bench init' or set 'default_source:' in queue.yaml.", file=sys.stderr)
         return None
 
     run_id = generate_run_id(config.preset_name, repo_dir)
@@ -761,6 +735,7 @@ def execute_run(config: RunConfig, dry_run: bool = False,
     # Patch suggestion provider if needed
     patched_file = None
     patched_lakefile = False
+    start_time = time.time()
     try:
         if config.suggestion_provider and config.suggestion_provider.command:
             if patch_file:
@@ -786,46 +761,70 @@ def execute_run(config: RunConfig, dry_run: bool = False,
         if clean_result.returncode != 0:
             print(f"Warning: lake clean failed: {clean_result.stderr.decode()}", file=sys.stderr)
 
-        # Run lake build with timeout
+        # Run lake build with timeout, streaming output to log file
         print(f"Running lake build (timeout: {config.build_timeout_hours}h)...")
-        start_time = time.time()
+        log_path = run_dir / "build.log"
 
         # Merge environment variables with current environment
         run_env = os.environ.copy()
         run_env.update(env_vars)
 
-        try:
-            result = subprocess.run(
+        # Use Popen to stream output to log file in real-time
+        timed_out = False
+        returncode = -1
+        with open(log_path, "w", encoding="utf-8") as log_file:
+            proc = subprocess.Popen(
                 cmd,
                 cwd=repo_dir,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # Merge stderr into stdout
                 text=True,
-                timeout=timeout_seconds,
                 env=run_env,
             )
-            timed_out = False
-        except subprocess.TimeoutExpired as e:
-            print(f"Build timed out after {config.build_timeout_hours}h")
-            timed_out = True
-            result = type('Result', (), {
-                'stdout': e.stdout.decode() if e.stdout else '',
-                'stderr': e.stderr.decode() if e.stderr else '',
-                'returncode': -1,
-            })()
+            try:
+                deadline = time.time() + timeout_seconds
+                while True:
+                    # Check timeout
+                    remaining = deadline - time.time()
+                    if remaining <= 0:
+                        print(f"Build timed out after {config.build_timeout_hours}h")
+                        proc.kill()
+                        proc.wait()
+                        timed_out = True
+                        break
+
+                    # Read line with timeout (use select for non-blocking read)
+                    ready, _, _ = select.select([proc.stdout], [], [], min(1.0, remaining))
+                    if ready:
+                        line = proc.stdout.readline()
+                        if line:
+                            log_file.write(line)
+                            log_file.flush()
+                        elif proc.poll() is not None:
+                            # Process finished and no more output
+                            break
+                    elif proc.poll() is not None:
+                        # Process finished
+                        break
+
+                returncode = proc.returncode if proc.returncode is not None else -1
+            except KeyboardInterrupt:
+                proc.kill()
+                proc.wait()
+                raise
 
         end_time = time.time()
         duration_seconds = int(end_time - start_time)
 
-        # Parse output
-        output = result.stdout + result.stderr
+        # Read back the log for parsing
+        with open(log_path, "r", encoding="utf-8") as f:
+            output = f.read()
         print(f"Parsing output ({len(output)} chars)...")
         messages = parse_build_output(output)
+        panic_count = count_panics(output)
         print(f"Found {len(messages)} replacement messages")
-
-        # Save build log (compressed)
-        log_path = run_dir / "build.log.gz"
-        with gzip.open(log_path, "wt", encoding="utf-8") as f:
-            f.write(output)
+        if panic_count > 0:
+            print(f"Warning: {panic_count} PANIC(s) detected during build")
 
         # Save messages as JSONL
         messages_path = run_dir / "messages.jsonl"
@@ -836,18 +835,29 @@ def execute_run(config: RunConfig, dry_run: bool = False,
         # Update metadata
         metadata.completed_at = datetime.now()
         metadata.duration_seconds = duration_seconds
-        metadata.message_count = len(messages)
+        metadata.replacement_count = len(messages)
+        metadata.steps_replaced = sum(1 + m.later_steps for m in messages)
+        metadata.panic_count = panic_count
         metadata.timed_out = timed_out
-        metadata.status = "timed_out" if timed_out else ("completed" if result.returncode == 0 else "failed")
+        metadata.status = "timed_out" if timed_out else ("completed" if returncode == 0 else "failed")
 
         atomic_write_json(run_dir / "metadata.json", metadata.to_dict())
 
         print(f"Run completed: {metadata.status}")
         print(f"Duration: {duration_seconds}s ({duration_seconds / 3600:.2f}h)")
-        print(f"Messages: {len(messages)}")
+        print(f"Replacements: {metadata.replacement_count} ({metadata.steps_replaced} steps)")
         print(f"Results saved to: {run_dir}")
 
         return metadata
+
+    except KeyboardInterrupt:
+        # Handle interrupt gracefully
+        print("\nInterrupted by user")
+        metadata.completed_at = datetime.now()
+        metadata.status = "interrupted"
+        metadata.duration_seconds = int(time.time() - start_time)
+        atomic_write_json(run_dir / "metadata.json", metadata.to_dict())
+        raise
 
     except Exception as e:
         # Update metadata with error

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+# Use venv if available
+if [[ -f .venv/bin/python ]]; then
+    exec .venv/bin/python -m scripts.cli "$@"
+else
+    exec python3 -m scripts.cli "$@"
+fi

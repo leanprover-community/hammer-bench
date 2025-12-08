@@ -30,6 +30,69 @@ from .runner import (
 )
 
 
+def format_table(headers: list[str], rows: list[list[str]], alignments: list[str] | None = None) -> str:
+    """Format a markdown table with proper column padding.
+
+    Args:
+        headers: List of header strings
+        rows: List of rows, each row is a list of cell strings
+        alignments: List of alignments ('l', 'r', 'c') for each column.
+                   Defaults to left-aligned.
+
+    Returns:
+        Formatted markdown table string
+    """
+    if not headers:
+        return ""
+
+    num_cols = len(headers)
+    if alignments is None:
+        alignments = ['l'] * num_cols
+
+    # Calculate column widths
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            if i < num_cols:
+                widths[i] = max(widths[i], len(str(cell)))
+
+    # Build separator line based on alignments
+    sep_parts = []
+    for i, align in enumerate(alignments):
+        w = widths[i]
+        if align == 'r':
+            sep_parts.append('-' * (w + 1) + ':')
+        elif align == 'c':
+            sep_parts.append(':' + '-' * w + ':')
+        else:  # left
+            sep_parts.append('-' * (w + 2))
+
+    # Format header
+    header_parts = []
+    for i, h in enumerate(headers):
+        if alignments[i] == 'r':
+            header_parts.append(h.rjust(widths[i]))
+        else:
+            header_parts.append(h.ljust(widths[i]))
+
+    lines = []
+    lines.append('| ' + ' | '.join(header_parts) + ' |')
+    lines.append('|' + '|'.join(sep_parts) + '|')
+
+    # Format rows
+    for row in rows:
+        row_parts = []
+        for i in range(num_cols):
+            cell = str(row[i]) if i < len(row) else ''
+            if alignments[i] == 'r':
+                row_parts.append(cell.rjust(widths[i]))
+            else:
+                row_parts.append(cell.ljust(widths[i]))
+        lines.append('| ' + ' | '.join(row_parts) + ' |')
+
+    return '\n'.join(lines)
+
+
 def cmd_init(args) -> int:
     """Initialize the hammer-bench environment."""
     hammer_dir = get_hammer_bench_dir()
@@ -102,10 +165,52 @@ def cmd_queue(args) -> int:
         print(f"Cleared {count} pending runs")
         return 0
 
+    elif args.queue_command == "redo":
+        # Re-queue a completed run
+        if not queue.completed:
+            print("No completed runs to redo")
+            return 1
+
+        if args.run_id:
+            # Find by run_id (can be partial match)
+            matches = [c for c in queue.completed if args.run_id in c.get("run_id", "")]
+            if not matches:
+                print(f"No completed run matching '{args.run_id}'")
+                return 1
+            if len(matches) > 1:
+                print(f"Multiple matches for '{args.run_id}':")
+                for m in matches:
+                    print(f"  - {m.get('run_id')}")
+                return 1
+            completed = matches[0]
+        else:
+            # Default to most recent
+            completed = queue.completed[-1]
+
+        # Create entry from completed run
+        entry = QueueEntry(
+            preset=completed["preset"],
+            targets=completed.get("targets"),
+            provider=completed.get("provider"),
+            fraction=completed.get("fraction"),
+        )
+        queue.entries.append(entry)
+        queue.save()
+
+        desc = entry.preset
+        if entry.targets:
+            desc += f"@{entry.targets}"
+        if entry.provider:
+            desc += f":{entry.provider}"
+        if entry.fraction:
+            desc += f"/{entry.fraction}"
+        print(f"Re-queued: {desc} (from {completed.get('run_id', 'unknown')})")
+        return 0
+
     else:
         # Default: list queue
-        if queue.source:
-            print(f"Source: {queue.source}")
+        if queue.default_source:
+            print(f"Default source: {queue.default_source}")
             print()
 
         print(f"Pending: {len(queue.entries)}")
@@ -139,11 +244,11 @@ def cmd_run(args) -> int:
         print("No pending runs in queue")
         return 0
 
-    # Checkout source if specified
-    if queue.source:
-        print(f"Source: {queue.source}")
+    # Checkout default source if specified
+    if queue.default_source:
+        print(f"Default source: {queue.default_source}")
         try:
-            checkout_source(queue.source)
+            checkout_source(queue.default_source)
         except Exception as e:
             print(f"Error checking out source: {e}", file=sys.stderr)
             return 1
@@ -151,54 +256,67 @@ def cmd_run(args) -> int:
 
     # Process entries
     processed = 0
-    while queue.entries:
-        entry = queue.entries[0]
+    try:
+        while queue.entries:
+            entry = queue.entries[0]
 
-        print(f"\n{'='*60}")
-        print(f"Processing: {entry.preset}" +
-              (f"@{entry.targets}" if entry.targets else "") +
-              (f":{entry.provider}" if entry.provider else "") +
-              (f"/{entry.fraction}" if entry.fraction else ""))
-        print(f"{'='*60}\n")
+            print(f"\n{'='*60}")
+            print(f"Processing: {entry.preset}" +
+                  (f"@{entry.targets}" if entry.targets else "") +
+                  (f":{entry.provider}" if entry.provider else "") +
+                  (f"/{entry.fraction}" if entry.fraction else ""))
+            print(f"{'='*60}\n")
 
-        # Build config
-        try:
-            config = get_run_config(entry.preset, entry.provider, entry.fraction, entry.targets)
-        except ValueError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            queue.entries.pop(0)
-            continue
+            # Build config
+            try:
+                config = get_run_config(entry.preset, entry.provider, entry.fraction, entry.targets)
+            except ValueError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                # Remove invalid entry and save
+                queue.entries.pop(0)
+                queue.save()
+                continue
 
-        # Execute the run
-        try:
-            metadata = execute_run(config, dry_run=args.dry_run, source=queue.source)
-        except Exception as e:
-            print(f"Error executing run: {e}", file=sys.stderr)
-            import traceback
-            traceback.print_exc()
-            queue.entries.pop(0)
-            continue
+            # Execute the run
+            try:
+                metadata = execute_run(config, dry_run=args.dry_run, source=queue.default_source)
+            except KeyboardInterrupt:
+                # Re-raise to be caught by outer handler
+                raise
+            except Exception as e:
+                print(f"Error executing run: {e}", file=sys.stderr)
+                import traceback
+                traceback.print_exc()
+                # Remove failed entry and save
+                queue.entries.pop(0)
+                queue.save()
+                continue
 
-        # Mark as done
-        if not args.dry_run and metadata:
-            completed_entry = queue.entries.pop(0)
-            queue.completed.append({
-                "preset": completed_entry.preset,
-                "targets": completed_entry.targets,
-                "provider": completed_entry.provider,
-                "fraction": completed_entry.fraction,
-                "completed_at": datetime.now().isoformat(),
-                "run_id": metadata.run_id,
-            })
-            queue.save()
-            print(f"\nMarked as completed in queue")
-        else:
-            queue.entries.pop(0)
+            # Mark as done
+            if not args.dry_run and metadata:
+                completed_entry = queue.entries.pop(0)
+                queue.completed.append({
+                    "preset": completed_entry.preset,
+                    "targets": completed_entry.targets,
+                    "provider": completed_entry.provider,
+                    "fraction": completed_entry.fraction,
+                    "completed_at": datetime.now().isoformat(),
+                    "run_id": metadata.run_id,
+                })
+                queue.save()
+                print(f"\nMarked as completed in queue")
+            else:
+                queue.entries.pop(0)
 
-        processed += 1
+            processed += 1
 
-        if args.once:
-            break
+            if args.once:
+                break
+
+    except KeyboardInterrupt:
+        print(f"\n\nInterrupted. Current run aborted, {len(queue.entries)} entries still pending.")
+        print("Run './bench run' to restart from the interrupted entry.")
+        return 130  # Standard exit code for SIGINT
 
     print(f"\nProcessed {processed} run(s)")
     return 0
@@ -257,112 +375,209 @@ def cmd_show(args) -> int:
     print(f"  Toolchain: {metadata['lean_toolchain']}")
     print(f"  Status: {metadata['status']}")
     print(f"  Duration: {metadata.get('duration_seconds', 'N/A')}s")
-    print(f"  Messages: {metadata.get('message_count', 'N/A')}")
+    print(f"  Replacements: {metadata.get('replacement_count', 0)} ({metadata.get('steps_replaced', 0)} steps)")
     print(f"  Timed out: {metadata.get('timed_out', False)}")
 
     return 0
 
 
 def cmd_compare(args) -> int:
-    """Compare two runs."""
+    """Compare multiple runs."""
     runs_dir = get_runs_dir()
-    run1_dir = runs_dir / args.run1
-    run2_dir = runs_dir / args.run2
+    run_ids = args.runs
 
-    # Validate runs exist
-    for run_id, run_dir in [(args.run1, run1_dir), (args.run2, run2_dir)]:
+    if len(run_ids) < 2:
+        print("Error: Need at least 2 runs to compare", file=sys.stderr)
+        return 1
+
+    # Validate runs exist and load data
+    run_dirs = []
+    for run_id in run_ids:
+        run_dir = runs_dir / run_id
         if not run_dir.exists():
             print(f"Run not found: {run_id}", file=sys.stderr)
             return 1
         if not (run_dir / "messages.jsonl").exists():
             print(f"Messages file not found for run: {run_id}", file=sys.stderr)
             return 1
+        run_dirs.append(run_dir)
 
-    # Load messages from both runs
+    # Load messages from all runs
     def load_messages(run_dir):
         messages = {}
         with open(run_dir / "messages.jsonl", encoding="utf-8") as f:
             for line in f:
                 msg = Message.from_dict(json.loads(line))
-                # Key by location + original tactic
-                key = f"{msg.file}:{msg.row}:{msg.col}:{msg.original}"
+                # Key by location (file:row:col)
+                key = f"{msg.file}:{msg.row}:{msg.col}"
                 if key not in messages:
                     messages[key] = []
                 messages[key].append(msg)
         return messages
 
-    msgs1 = load_messages(run1_dir)
-    msgs2 = load_messages(run2_dir)
+    all_msgs = [load_messages(d) for d in run_dirs]
+    all_keys = [set(msgs.keys()) for msgs in all_msgs]
 
     # Load metadata
-    with open(run1_dir / "metadata.json", encoding="utf-8") as f:
-        meta1 = json.load(f)
-    with open(run2_dir / "metadata.json", encoding="utf-8") as f:
-        meta2 = json.load(f)
-
-    # Compute statistics
-    keys1 = set(msgs1.keys())
-    keys2 = set(msgs2.keys())
-    common = keys1 & keys2
-    only_in_1 = keys1 - keys2
-    only_in_2 = keys2 - keys1
-
-    # Count by replacement tactic
-    def count_by_replacement(messages):
-        counts = {}
-        for key, msg_list in messages.items():
-            for msg in msg_list:
-                counts[msg.replacement] = counts.get(msg.replacement, 0) + 1
-        return counts
-
-    counts1 = count_by_replacement(msgs1)
-    counts2 = count_by_replacement(msgs2)
-    all_tactics = sorted(set(counts1.keys()) | set(counts2.keys()))
+    all_meta = []
+    for run_dir in run_dirs:
+        with open(run_dir / "metadata.json", encoding="utf-8") as f:
+            all_meta.append(json.load(f))
 
     # Output based on format
     if args.format == "json":
         result = {
-            "run1": {"id": args.run1, "total": len(keys1), "by_tactic": counts1},
-            "run2": {"id": args.run2, "total": len(keys2), "by_tactic": counts2},
-            "common": len(common),
-            "only_in_run1": len(only_in_1),
-            "only_in_run2": len(only_in_2),
+            "runs": [
+                {"id": run_id, "total": len(keys)}
+                for run_id, keys in zip(run_ids, all_keys)
+            ],
+            "all_locations": len(set().union(*all_keys)),
+            "common_to_all": len(set.intersection(*all_keys)) if all_keys else 0,
         }
         print(json.dumps(result, indent=2))
     elif args.format == "csv":
-        print("tactic,run1,run2,diff")
-        for tactic in all_tactics:
-            c1 = counts1.get(tactic, 0)
-            c2 = counts2.get(tactic, 0)
-            print(f"{tactic},{c1},{c2},{c2-c1}")
-        print(f"TOTAL,{len(keys1)},{len(keys2)},{len(keys2)-len(keys1)}")
+        headers = ["location"] + [f"run{i+1}" for i in range(len(run_ids))]
+        print(",".join(headers))
+        all_locs = sorted(set().union(*all_keys))
+        for loc in all_locs:
+            row = [loc] + ["1" if loc in keys else "0" for keys in all_keys]
+            print(",".join(row))
     else:  # markdown
-        print(f"# Comparison: {args.run1} vs {args.run2}\n")
-        print(f"## Metadata\n")
-        print(f"| | Run 1 | Run 2 |")
-        print(f"|---|---|---|")
-        print(f"| Run ID | {args.run1} | {args.run2} |")
-        print(f"| Base | {meta1.get('base_ref', 'N/A')} | {meta2.get('base_ref', 'N/A')} |")
-        print(f"| Commit | {meta1.get('base_commit', 'N/A')[:12]} | {meta2.get('base_commit', 'N/A')[:12]} |")
-        print(f"| Duration | {meta1.get('duration_seconds', 'N/A')}s | {meta2.get('duration_seconds', 'N/A')}s |")
-        print(f"| Status | {meta1.get('status', 'N/A')} | {meta2.get('status', 'N/A')} |")
+        # Validate that runs are comparable
+        ref_meta = all_meta[0]
+        ref_base = ref_meta.get('base_commit', '')
+        ref_machine = ref_meta.get('machine', '')
+        ref_targets = ref_meta.get('config', {}).get('targets', [])
+        ref_target_coll = ref_meta.get('config', {}).get('target_collection', 'all')
+        ref_fraction = ref_meta.get('config', {}).get('linters', {}).get('fraction', 1)
+
+        errors = []
+        for i, meta in enumerate(all_meta[1:], 2):
+            base = meta.get('base_commit', '')
+            machine = meta.get('machine', '')
+            targets = meta.get('config', {}).get('targets', [])
+            fraction = meta.get('config', {}).get('linters', {}).get('fraction', 1)
+
+            if base != ref_base:
+                errors.append(f"Run {i}: Base commit mismatch ({base[:12]} vs {ref_base[:12]})")
+            if machine != ref_machine:
+                errors.append(f"Run {i}: Machine mismatch ({machine} vs {ref_machine})")
+            if targets != ref_targets:
+                target_coll = meta.get('config', {}).get('target_collection', 'all')
+                errors.append(f"Run {i}: Targets mismatch ({target_coll} vs {ref_target_coll})")
+            if fraction != ref_fraction:
+                errors.append(f"Run {i}: Fraction mismatch ({fraction} vs {ref_fraction})")
+
+        if errors:
+            print("ERROR: Runs are not comparable:\n")
+            for err in errors:
+                print(f"  - {err}")
+            print()
+            return 1
+
+        # Header with shared info
+        print(f"# Comparison\n")
+        print(f"Base:     {ref_meta.get('base_ref', ref_base[:12])}")
+        print(f"Machine:  {ref_machine}")
+        print(f"Targets:  {ref_target_coll}" + (f" ({len(ref_targets)} modules)" if ref_target_coll != 'all' else ""))
+        print(f"Fraction: 1/{ref_fraction}" + (" (all)" if ref_fraction == 1 else ""))
         print()
-        print(f"## Summary\n")
-        print(f"| Metric | Run 1 | Run 2 | Diff |")
-        print(f"|---|---:|---:|---:|")
-        print(f"| Total messages | {len(keys1)} | {len(keys2)} | {len(keys2)-len(keys1):+d} |")
-        print(f"| Common locations | {len(common)} | {len(common)} | - |")
-        print(f"| Only in Run 1 | {len(only_in_1)} | - | - |")
-        print(f"| Only in Run 2 | - | {len(only_in_2)} | - |")
+
+        # Get provider info
+        def get_provider(meta):
+            provider = meta.get('config', {}).get('suggestion_provider')
+            if provider:
+                return provider.get('name', 'default')
+            return 'default'
+
+        # Build column headers
+        col_headers = [''] + [f'Run {i+1}' for i in range(len(run_ids))]
+
+        # Runs table
+        print("## Runs\n")
+        rows = [
+            ['Run ID'] + run_ids,
+            ['Preset'] + [m.get('config', {}).get('preset_name', 'N/A') for m in all_meta],
+            ['Provider'] + [get_provider(m) for m in all_meta],
+            ['Duration'] + [f"{m.get('duration_seconds', 'N/A')}s" for m in all_meta],
+            ['Status'] + [m.get('status', 'N/A') for m in all_meta],
+        ]
+        print(format_table(col_headers, rows, alignments=['l'] * len(col_headers)))
         print()
-        print(f"## By Tactic\n")
-        print(f"| Tactic | Run 1 | Run 2 | Diff |")
-        print(f"|---|---:|---:|---:|")
-        for tactic in all_tactics:
-            c1 = counts1.get(tactic, 0)
-            c2 = counts2.get(tactic, 0)
-            diff = c2 - c1
-            print(f"| {tactic} | {c1} | {c2} | {diff:+d} |")
+
+        # Compute overlap statistics
+        all_locations = set().union(*all_keys)
+        common_to_all = set.intersection(*all_keys) if all_keys else set()
+
+        # Count how many runs each location appears in
+        location_counts = {}
+        for loc in all_locations:
+            count = sum(1 for keys in all_keys if loc in keys)
+            location_counts[loc] = count
+
+        # Results table
+        print("## Results\n")
+        result_headers = ['Metric'] + [f'Run {i+1}' for i in range(len(run_ids))]
+        result_rows = [
+            ['Replacements'] + [str(m.get('total_replacements', len(keys))) for m, keys in zip(all_meta, all_keys)],
+        ]
+        print(format_table(result_headers, result_rows, alignments=['l'] + ['r'] * len(run_ids)))
+        print()
+
+        # Overlap summary - show which combination of runs each location appears in
+        print("## Overlap\n")
+
+        # Build unique labels for each run
+        # Use preset name, but add provider or run number if there are duplicates
+        def build_run_labels(all_meta):
+            base_names = [m.get('config', {}).get('preset_name', f'run{i+1}') for i, m in enumerate(all_meta)]
+            providers = [get_provider(m) for m in all_meta]
+
+            # Check for duplicate preset names
+            name_counts = {}
+            for name in base_names:
+                name_counts[name] = name_counts.get(name, 0) + 1
+
+            labels = []
+            name_seen = {}
+            for i, (name, provider) in enumerate(zip(base_names, providers)):
+                if name_counts[name] > 1:
+                    # Duplicate preset - disambiguate with provider or run number
+                    if provider != 'default':
+                        label = f"{name}:{provider}"
+                    else:
+                        # Use run number if providers are also the same
+                        idx = name_seen.get(name, 0) + 1
+                        name_seen[name] = idx
+                        label = f"{name} (#{idx})"
+                else:
+                    label = name
+                labels.append(label)
+            return labels
+
+        preset_names = build_run_labels(all_meta)
+
+        # Group locations by which runs they appear in (as a frozenset of indices)
+        by_combination = {}
+        for loc in all_locations:
+            combo = frozenset(i for i, keys in enumerate(all_keys) if loc in keys)
+            if combo not in by_combination:
+                by_combination[combo] = 0
+            by_combination[combo] += 1
+
+        # Build rows for the table, sorted by combo size (single, double, triple), then by count descending
+        overlap_rows = []
+        for combo, count in sorted(by_combination.items(), key=lambda x: (len(x[0]), -x[1])):
+            # Build the label showing which presets
+            names = [preset_names[i] for i in sorted(combo)]
+            label = ' ∩ '.join(names)
+            overlap_rows.append([label, str(count)])
+
+        print(format_table(
+            ['Runs', 'Locations'],
+            overlap_rows,
+            alignments=['l', 'r']
+        ))
 
     return 0
 
@@ -575,8 +790,8 @@ def cmd_cleanup(args) -> int:
         print("Runs to delete:")
         for run_dir, run_time, metadata in runs_to_delete:
             status = metadata.get("status", "unknown")
-            msg_count = metadata.get("message_count", 0)
-            print(f"  {run_dir.name} [{status}] {msg_count} messages ({run_time.date()})")
+            replacement_count = metadata.get("replacement_count", 0)
+            print(f"  {run_dir.name} [{status}] {replacement_count} replacements ({run_time.date()})")
         print()
 
     # If dry-run, stop here
@@ -746,7 +961,7 @@ def cmd_selftest(args) -> int:
                 else:
                     # No expected file - just report count
                     results.append((description, "PASS",
-                        f"{metadata.message_count} messages (no expected file)"))
+                        f"{metadata.replacement_count} replacements (no expected file)"))
                     if not args.dry_run:
                         print(f"  Note: No expected output file at {expected_file}")
                         print(f"  To create one, copy the messages.jsonl from this run")
