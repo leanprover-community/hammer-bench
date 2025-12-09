@@ -16,6 +16,7 @@ from .core import (
     get_git_commit,
     get_git_ref,
     get_lean_toolchain,
+    AttemptedLocation,
     Message,
     SourceSpec,
 )
@@ -380,6 +381,25 @@ def cmd_show(args) -> int:
     return 0
 
 
+def load_attempted_locations(run_dir: Path) -> set[tuple[str, int, int]]:
+    """Load attempted locations from a run directory.
+
+    Returns a set of (file, row, col) tuples.
+    Returns empty set if attempted.jsonl doesn't exist.
+    """
+    attempted_file = run_dir / "attempted.jsonl"
+    if not attempted_file.exists():
+        return set()
+
+    locations = set()
+    with open(attempted_file, encoding="utf-8") as f:
+        for line in f:
+            data = json.loads(line)
+            loc = AttemptedLocation.from_dict(data)
+            locations.add(loc.location_key())
+    return locations
+
+
 def cmd_compare(args) -> int:
     """Compare multiple runs."""
     runs_dir = get_runs_dir()
@@ -578,6 +598,68 @@ def cmd_compare(args) -> int:
             alignments=['l', 'r']
         ))
 
+        # Check if attempted locations are available (for location verification)
+        all_attempted = [load_attempted_locations(d) for d in run_dirs]
+        has_attempted = any(a for a in all_attempted)
+
+        if has_attempted:
+            print("## Attempted Locations\n")
+
+            # Show counts
+            attempted_counts = [len(a) for a in all_attempted]
+            print("Locations tested per run:")
+            for i, count in enumerate(attempted_counts):
+                print(f"  - {preset_names[i]}: {count}")
+            print()
+
+            # Check for mismatches
+            common_attempted = set.intersection(*[a for a in all_attempted if a]) if all(a for a in all_attempted) else set()
+            if len(run_ids) >= 2 and all(a for a in all_attempted):
+                if common_attempted == all_attempted[0] == all_attempted[1]:
+                    print("All runs tested the same locations. ✓\n")
+                else:
+                    print("WARNING: Runs tested different locations!\n")
+                    # Show which locations were different
+                    for i, (name_i, attempted_i) in enumerate(zip(preset_names, all_attempted)):
+                        for j, (name_j, attempted_j) in enumerate(zip(preset_names, all_attempted)):
+                            if i >= j:
+                                continue
+                            only_i = attempted_i - attempted_j
+                            only_j = attempted_j - attempted_i
+                            if only_i:
+                                print(f"Tested only in {name_i} (not {name_j}): {len(only_i)}")
+                            if only_j:
+                                print(f"Tested only in {name_j} (not {name_i}): {len(only_j)}")
+                    print()
+
+        # Show samples if requested
+        if args.samples is not None:
+            import random
+            print()
+            print("## Samples\n")
+
+            # For each pair of runs, show samples where one succeeded and the other failed
+            for i in range(len(run_ids)):
+                for j in range(len(run_ids)):
+                    if i == j:
+                        continue
+                    # Find locations where run i succeeded but run j failed
+                    only_in_i = all_keys[i] - all_keys[j]
+                    if only_in_i:
+                        print(f"### {preset_names[i]} succeeded, {preset_names[j]} failed ({len(only_in_i)} total)\n")
+                        # Sample random locations
+                        sampled_locs = random.sample(
+                            list(only_in_i),
+                            min(args.samples, len(only_in_i))
+                        )
+                        for loc in sampled_locs:
+                            msgs = all_msgs[i].get(loc, [])
+                            if msgs:
+                                msg = msgs[0]
+                                print(f"- `{loc}`")
+                                print(f"  - Original: `{msg.original}`")
+                        print()
+
     return 0
 
 
@@ -653,6 +735,34 @@ def cmd_validate(args) -> int:
     print(f"  Only in Run 1: {len(only_in_1)}")
     print(f"  Only in Run 2: {len(only_in_2)}")
     print()
+
+    # Check attempted locations if available
+    attempted1 = load_attempted_locations(run1_dir)
+    attempted2 = load_attempted_locations(run2_dir)
+
+    if attempted1 or attempted2:
+        print("Attempted Locations:")
+        print(f"  Attempted in Run 1: {len(attempted1)}")
+        print(f"  Attempted in Run 2: {len(attempted2)}")
+        common_attempted = attempted1 & attempted2
+        only_attempted_1 = attempted1 - attempted2
+        only_attempted_2 = attempted2 - attempted1
+        print(f"  Common locations: {len(common_attempted)}")
+        print(f"  Only in Run 1: {len(only_attempted_1)}")
+        print(f"  Only in Run 2: {len(only_attempted_2)}")
+        print()
+
+        if only_attempted_1 or only_attempted_2:
+            print("WARNING: Runs tested different locations!")
+            if only_attempted_1:
+                print(f"  Sample locations only tested in Run 1:")
+                for loc in list(only_attempted_1)[:5]:
+                    print(f"    {loc[0]}:{loc[1]}:{loc[2]}")
+            if only_attempted_2:
+                print(f"  Sample locations only tested in Run 2:")
+                for loc in list(only_attempted_2)[:5]:
+                    print(f"    {loc[0]}:{loc[1]}:{loc[2]}")
+            print()
 
     if len(only_in_1) == 0 and len(only_in_2) == 0:
         print("PASS: Runs are perfectly consistent")

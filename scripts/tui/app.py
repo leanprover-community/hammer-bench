@@ -23,13 +23,13 @@ class BenchApp(App):
     }
 
     #left-panel {
-        width: 60%;
+        width: 40%;
         height: 100%;
         border-right: solid $border;
     }
 
     #right-panel {
-        width: 40%;
+        width: 60%;
         height: 100%;
     }
 

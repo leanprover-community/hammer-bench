@@ -15,6 +15,7 @@ from textual.widgets.tree import TreeNode
 from .data import (
     HierarchicalRuns,
     ComparisonResult,
+    DiffSample,
     compute_comparison,
 )
 
@@ -271,38 +272,32 @@ class ComparisonPanel(Widget):
     """
 
     comparison: reactive[Optional[ComparisonResult]] = reactive(None)
+    samples_loaded: reactive[bool] = reactive(False)
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._content: Optional[Static] = None
+        self._pending_run_ids: Optional[list[str]] = None
 
     def compose(self) -> ComposeResult:
         yield ScrollableContainer(
             Static("Select a run to view details", classes="no-selection", id="comparison-content"),
         )
 
-    def watch_comparison(self, comparison: Optional[ComparisonResult]) -> None:
-        """Update display when comparison changes."""
-        content = self.query_one("#comparison-content", Static)
+    def _build_display(self, comparison: ComparisonResult, include_samples: bool = False) -> str:
+        """Build the display string for a comparison."""
+        from rich.markup import escape
 
-        if comparison is None:
-            content.update("Select a run to view details")
-            content.add_class("no-selection")
-            return
-
-        content.remove_class("no-selection")
-
-        # Build display
         lines = []
         num_runs = len(comparison.run_ids)
         if num_runs == 1:
-            lines.append(f"[bold]{comparison.preset_names[0]}[/bold]")
+            lines.append(f"[bold]{escape(comparison.preset_names[0])}[/bold]")
         else:
             lines.append(f"[bold]Comparison ({num_runs} runs)[/bold]")
         lines.append("")
-        lines.append(f"Base: {comparison.base_ref}")
-        lines.append(f"Machine: {comparison.machine}")
-        lines.append(f"Targets: {comparison.target_collection}")
+        lines.append(f"Base: {escape(comparison.base_ref)}")
+        lines.append(f"Machine: {escape(comparison.machine)}")
+        lines.append(f"Targets: {escape(comparison.target_collection)}")
         lines.append(f"Fraction: 1/{comparison.fraction}")
         lines.append("")
 
@@ -310,7 +305,7 @@ class ComparisonPanel(Widget):
         lines.append("[bold]Results[/bold]")
 
         # Header
-        preset_headers = "  ".join(f"{p[:10]:>10}" for p in comparison.preset_names)
+        preset_headers = "  ".join(f"{escape(p[:10]):>10}" for p in comparison.preset_names)
         lines.append(f"{'Metric':<12} {preset_headers}")
         lines.append("-" * (12 + 2 + len(preset_headers)))
 
@@ -338,15 +333,88 @@ class ComparisonPanel(Widget):
                 comparison.overlap_counts.items(),
                 key=lambda x: (len(x[0]), -x[1])
             ):
-                combo_labels = [labels[i] for i in sorted(combo)]
+                combo_labels = [escape(labels[i]) for i in sorted(combo)]
                 label = " ∩ ".join(combo_labels)
                 lines.append(f"  {label}: {count}")
 
-        content.update("\n".join(lines))
+        # Samples section (if available)
+        if include_samples and comparison.diff_samples:
+            lines.append("")
+            lines.append("[bold]Samples[/bold]")
+
+            labels = comparison.preset_names
+            for (i, j), samples in comparison.diff_samples.items():
+                if samples:
+                    lines.append("")
+                    lines.append(f"[dim]{escape(labels[i])} succeeded, {escape(labels[j])} failed:[/dim]")
+                    for sample in samples:
+                        lines.append(f"  • {sample.file}:{sample.row}:{sample.col}")
+                        # Truncate long original proofs
+                        orig = sample.original
+                        if len(orig) > 50:
+                            orig = orig[:47] + "..."
+                        lines.append(f"    [dim]Original:[/dim] {escape(orig)}")
+        elif include_samples and num_runs >= 2:
+            lines.append("")
+            lines.append("[dim]Loading samples...[/dim]")
+
+        return "\n".join(lines)
+
+    def watch_comparison(self, comparison: Optional[ComparisonResult]) -> None:
+        """Update display when comparison changes."""
+        content = self.query_one("#comparison-content", Static)
+
+        if comparison is None:
+            content.update("Select a run to view details")
+            content.add_class("no-selection")
+            return
+
+        content.remove_class("no-selection")
+
+        # Check if samples are loaded
+        has_samples = bool(comparison.diff_samples)
+        display_text = self._build_display(comparison, include_samples=has_samples)
+        # Use Text.from_markup to pre-render, avoiding issues with Static.update
+        from rich.text import Text
+        content.update(Text.from_markup(display_text))
+
+    def watch_samples_loaded(self, loaded: bool) -> None:
+        """Update display when samples finish loading."""
+        if loaded and self.comparison is not None:
+            content = self.query_one("#comparison-content", Static)
+            display_text = self._build_display(self.comparison, include_samples=True)
+            from rich.text import Text
+            content.update(Text.from_markup(display_text))
 
     def update_selection(self, run_ids: list[str]) -> None:
         """Update comparison based on selected runs."""
         if len(run_ids) < 1:
             self.comparison = None
+            self.samples_loaded = False
+            self._pending_run_ids = None
         else:
-            self.comparison = compute_comparison(run_ids)
+            # First, show comparison without samples (fast)
+            self.samples_loaded = False
+            self.comparison = compute_comparison(run_ids, include_samples=False)
+            self._pending_run_ids = run_ids
+
+            # Then load samples in background (if 2+ runs)
+            if len(run_ids) >= 2:
+                self.call_later(self._load_samples, run_ids)
+
+    def _load_samples(self, run_ids: list[str]) -> None:
+        """Load samples in background and update display."""
+        # Check if selection changed while we were waiting
+        if self._pending_run_ids != run_ids:
+            return
+
+        # Compute comparison with samples
+        comparison_with_samples = compute_comparison(run_ids, include_samples=True, sample_count=5)
+
+        # Check again if selection changed
+        if self._pending_run_ids != run_ids:
+            return
+
+        if comparison_with_samples:
+            self.comparison = comparison_with_samples
+            self.samples_loaded = True

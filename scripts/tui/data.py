@@ -265,6 +265,15 @@ def get_available_providers() -> list[str]:
 
 
 @dataclass
+class DiffSample:
+    """A sample where one run succeeded and another failed."""
+    file: str
+    row: int
+    col: int
+    original: str
+
+
+@dataclass
 class ComparisonResult:
     """Structured comparison data."""
     run_ids: list[str]
@@ -283,17 +292,32 @@ class ComparisonResult:
     # Overlap data: maps frozenset of run indices -> count
     overlap_counts: dict[frozenset[int], int] = field(default_factory=dict)
 
+    # Samples: for each pair (i, j), samples where run i succeeded but j failed
+    # Key is (i, j), value is list of DiffSample
+    diff_samples: dict[tuple[int, int], list[DiffSample]] = field(default_factory=dict)
+
     @property
     def total_locations(self) -> int:
         """Total unique locations across all runs."""
         return sum(self.overlap_counts.values())
 
 
-def compute_comparison(run_ids: list[str]) -> Optional[ComparisonResult]:
+def compute_comparison(
+    run_ids: list[str],
+    include_samples: bool = False,
+    sample_count: int = 5,
+) -> Optional[ComparisonResult]:
     """Compute comparison data for one or more runs.
+
+    Args:
+        run_ids: List of run IDs to compare
+        include_samples: Whether to include random samples of differences
+        sample_count: Number of samples per pair (default 5)
 
     Returns None if runs are not comparable (different commit/machine/targets/fraction).
     """
+    import random
+
     if len(run_ids) < 1:
         return None
 
@@ -329,17 +353,24 @@ def compute_comparison(run_ids: list[str]) -> Optional[ComparisonResult]:
             return None
 
     # Load messages from all runs
-    all_keys = []
+    # When include_samples is True, we need to keep the full message data
+    all_keys: list[set[str]] = []
+    all_messages: list[dict[str, Message]] = []  # key -> Message
+
     for run_id in run_ids:
         messages_file = runs_dir / run_id / "messages.jsonl"
-        keys = set()
+        keys: set[str] = set()
+        messages: dict[str, Message] = {}
         if messages_file.exists():
             with open(messages_file, encoding="utf-8") as f:
                 for line in f:
                     msg = Message.from_dict(json.loads(line))
                     key = f"{msg.file}:{msg.row}:{msg.col}"
                     keys.add(key)
+                    if include_samples:
+                        messages[key] = msg
         all_keys.append(keys)
+        all_messages.append(messages)
 
     # Compute overlap
     all_locations = set().union(*all_keys)
@@ -347,6 +378,33 @@ def compute_comparison(run_ids: list[str]) -> Optional[ComparisonResult]:
     for loc in all_locations:
         combo = frozenset(i for i, keys in enumerate(all_keys) if loc in keys)
         overlap_counts[combo] = overlap_counts.get(combo, 0) + 1
+
+    # Compute diff samples if requested
+    diff_samples: dict[tuple[int, int], list[DiffSample]] = {}
+    if include_samples and len(run_ids) >= 2:
+        for i in range(len(run_ids)):
+            for j in range(len(run_ids)):
+                if i == j:
+                    continue
+                # Find locations where run i succeeded but run j failed
+                only_in_i = all_keys[i] - all_keys[j]
+                if only_in_i:
+                    # Sample random locations
+                    sampled_keys = random.sample(
+                        list(only_in_i),
+                        min(sample_count, len(only_in_i))
+                    )
+                    samples = []
+                    for key in sampled_keys:
+                        msg = all_messages[i].get(key)
+                        if msg:
+                            samples.append(DiffSample(
+                                file=msg.file,
+                                row=msg.row,
+                                col=msg.col,
+                                original=msg.original,
+                            ))
+                    diff_samples[(i, j)] = samples
 
     # Extract per-run data
     def get_provider(meta):
@@ -370,4 +428,5 @@ def compute_comparison(run_ids: list[str]) -> Optional[ComparisonResult]:
         replacements=[m.get("total_replacements", m.get("replacement_count", 0)) for m in all_meta],
         durations=[m.get("duration_seconds") for m in all_meta],
         overlap_counts=overlap_counts,
+        diff_samples=diff_samples,
     )

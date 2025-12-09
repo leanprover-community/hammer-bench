@@ -228,6 +228,29 @@ class Message:
 
 
 @dataclass
+class AttemptedLocation:
+    """A location where tryAtEachStep attempted to run a tactic.
+
+    This is logged before the tactic runs, to verify that different runs
+    test the same locations (important for comparing tactic effectiveness).
+    """
+    file: str
+    row: int
+    col: int
+
+    def to_dict(self) -> dict:
+        return {"file": self.file, "row": self.row, "col": self.col}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "AttemptedLocation":
+        return cls(file=d["file"], row=d["row"], col=d["col"])
+
+    def location_key(self) -> tuple[str, int, int]:
+        """Return a hashable key for this location."""
+        return (self.file, self.row, self.col)
+
+
+@dataclass
 class RunMetadata:
     """Metadata for a completed benchmark run."""
     run_id: str

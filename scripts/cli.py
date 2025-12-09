@@ -111,6 +111,15 @@ def create_parser() -> argparse.ArgumentParser:
         default="markdown",
         help="Output format",
     )
+    compare_parser.add_argument(
+        "--samples",
+        type=int,
+        nargs="?",
+        const=5,
+        default=None,
+        metavar="N",
+        help="Show N random samples where one tactic succeeded but another failed (default: 5)",
+    )
 
     # validate command
     validate_parser = subparsers.add_parser(

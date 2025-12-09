@@ -54,7 +54,7 @@ from .core import (
     get_runs_dir,
     get_worktrees_dir,
 )
-from .parser import count_panics, parse_build_output
+from .parser import count_panics, parse_build_output, parse_attempted_locations
 
 
 def load_presets() -> dict:
@@ -822,7 +822,10 @@ def execute_run(config: RunConfig, dry_run: bool = False,
         print(f"Parsing output ({len(output)} chars)...")
         messages = parse_build_output(output)
         panic_count = count_panics(output)
+        attempted = parse_attempted_locations(output)
         print(f"Found {len(messages)} replacement messages")
+        if attempted:
+            print(f"Found {len(attempted)} attempted locations")
         if panic_count > 0:
             print(f"Warning: {panic_count} PANIC(s) detected during build")
 
@@ -831,6 +834,13 @@ def execute_run(config: RunConfig, dry_run: bool = False,
         with open(messages_path, "w", encoding="utf-8") as f:
             for msg in messages:
                 f.write(json.dumps(msg.to_dict()) + "\n")
+
+        # Save attempted locations as JSONL (if any were found)
+        if attempted:
+            attempted_path = run_dir / "attempted.jsonl"
+            with open(attempted_path, "w", encoding="utf-8") as f:
+                for loc in attempted:
+                    f.write(json.dumps(loc.to_dict()) + "\n")
 
         # Update metadata
         metadata.completed_at = datetime.now()
