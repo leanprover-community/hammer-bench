@@ -1,153 +1,51 @@
 default_source: leanprover-community/mathlib4-nightly-testing@nightly-testing-2025-12-07
-queue:
-- preset: grind
-  fraction: 100
-- preset: aesop
-  fraction: 100
-- preset: simp_all
-  fraction: 100
-- preset: grind
-  fraction: 10
-- preset: aesop
-  fraction: 10
-- preset: simp_all
-  fraction: 10
+queue: []
 completed:
 - preset: grind
-  targets: quick_test
-  provider: null
-  fraction: 10
-  completed_at: '2025-12-04T23:18:39.777463'
-  run_id: 2025-12-04T23-18-26_grind_057a295
-- preset: grind
-  targets: quick_test
-  provider: null
-  fraction: 1
-  completed_at: '2025-12-04T23:19:15.202671'
-  run_id: 2025-12-04T23-19-05_grind_057a295
-- preset: simp_all
-  targets: quick_test
-  provider: null
-  fraction: 10
-  completed_at: '2025-12-04T23:19:29.778752'
-  run_id: 2025-12-04T23-19-19_simp_all_057a295
-- preset: simp_all
-  targets: quick_test
-  provider: null
-  fraction: 1
-  completed_at: '2025-12-04T23:19:49.532253'
-  run_id: 2025-12-04T23-19-33_simp_all_057a295
-- preset: grind
-  targets: quick_test
-  provider: null
-  fraction: 10
-  completed_at: '2025-12-04T23:25:34.543056'
-  run_id: 2025-12-04T23-25-27_grind_057a295
-- preset: grind
-  targets: quick_test
-  provider: null
-  fraction: 1
-  completed_at: '2025-12-04T23:25:44.968601'
-  run_id: 2025-12-04T23-25-37_grind_057a295
-- preset: simp_all
-  targets: quick_test
-  provider: null
-  fraction: 10
-  completed_at: '2025-12-04T23:25:52.688142'
-  run_id: 2025-12-04T23-25-45_simp_all_057a295
-- preset: simp_all
-  targets: quick_test
-  provider: null
-  fraction: 1
-  completed_at: '2025-12-04T23:26:00.504677'
-  run_id: 2025-12-04T23-25-53_simp_all_057a295
-- preset: aesop
-  targets: quick_test
-  provider: null
-  fraction: 10
-  completed_at: '2025-12-04T23:26:07.529678'
-  run_id: 2025-12-04T23-26-00_aesop_057a295
-- preset: aesop
-  targets: quick_test
-  provider: null
-  fraction: 1
-  completed_at: '2025-12-04T23:26:14.267492'
-  run_id: 2025-12-04T23-26-07_aesop_057a295
-- preset: aesop
-  targets: quick_test
-  provider: null
-  fraction: 10
-  completed_at: '2025-12-04T23:29:33.085283'
-  run_id: 2025-12-04T23-29-26_aesop_057a295
-- preset: aesop
-  targets: quick_test
-  provider: null
-  fraction: 1
-  completed_at: '2025-12-04T23:37:11.638572'
-  run_id: 2025-12-04T23-37-04_aesop_f63c41e
-- preset: grind
-  targets: sample
+  targets: null
   provider: null
   fraction: 100
-  completed_at: '2025-12-04T23:46:02.470718'
-  run_id: 2025-12-04T23-41-48_grind_f63c41e
+  completed_at: '2025-12-08T07:33:30.684183'
+  run_id: 2025-12-08T07-09-50_grind_f83e6b6
 - preset: aesop
-  targets: sample
+  targets: null
   provider: null
   fraction: 100
-  completed_at: '2025-12-04T23:51:20.638669'
-  run_id: 2025-12-04T23-46-59_aesop_f63c41e
-- preset: grind
-  targets: sample
-  provider: null
-  fraction: 100
-  completed_at: '2025-12-05T00:07:01.974997'
-  run_id: 2025-12-05T00-02-41_grind_11586a7
-- preset: aesop
-  targets: sample
-  provider: null
-  fraction: 100
-  completed_at: '2025-12-05T00:11:32.143585'
-  run_id: 2025-12-05T00-07-02_aesop_11586a7
+  completed_at: '2025-12-08T07:57:38.998604'
+  run_id: 2025-12-08T07-33-30_aesop_f83e6b6
 - preset: simp_all
-  targets: sample
+  targets: null
   provider: null
   fraction: 100
-  completed_at: '2025-12-05T00:15:58.777234'
-  run_id: 2025-12-05T00-11-32_simp_all_11586a7
+  completed_at: '2025-12-08T08:19:50.003896'
+  run_id: 2025-12-08T07-57-39_simp_all_f83e6b6
 - preset: grind
-  targets: sample
+  targets: null
   provider: null
   fraction: 10
-  completed_at: '2025-12-05T00:25:36.712461'
-  run_id: 2025-12-05T00-18-14_grind_8d1a48c
-- preset: simp_all
-  targets: sample
+  completed_at: '2025-12-08T10:43:09.444720'
+  run_id: 2025-12-08T08-19-50_grind_f83e6b6
+- preset: aesop
+  targets: null
   provider: null
   fraction: 10
-  completed_at: '2025-12-05T00:30:28.724599'
-  run_id: 2025-12-05T00-25-37_simp_all_8d1a48c
-- preset: aesop
-  targets: sample
+  completed_at: '2025-12-08T10:55:36.934683'
+  run_id: 2025-12-08T10-43-09_aesop_f83e6b6
+- preset: simp_all
+  targets: null
   provider: null
   fraction: 10
-  completed_at: '2025-12-05T00:35:43.180700'
-  run_id: 2025-12-05T00-30-29_aesop_8d1a48c
-- preset: grind
-  targets: sample
+  completed_at: '2025-12-08T11:26:15.086472'
+  run_id: 2025-12-08T10-55-36_simp_all_f83e6b6
+- preset: grind_suggestions
+  targets: null
   provider: null
-  fraction: 1
-  completed_at: '2025-12-05T07:03:31.562131'
-  run_id: 2025-12-05T01-03-29_grind_8d1a48c
-- preset: aesop
-  targets: sample
+  fraction: 100
+  completed_at: '2025-12-08T22:14:07.651676'
+  run_id: 2025-12-08T14-14-03_grind_suggestions_f83e6b6
+- preset: grind_suggestions
+  targets: null
   provider: null
-  fraction: 1
-  completed_at: '2025-12-05T07:25:03.310831'
-  run_id: 2025-12-05T07-03-31_aesop_8d1a48c
-- preset: simp_all
-  targets: sample
-  provider: null
-  fraction: 1
-  completed_at: '2025-12-05T07:33:02.780973'
-  run_id: 2025-12-05T07-25-03_simp_all_8d1a48c
+  fraction: 10
+  completed_at: '2025-12-09T00:31:03.433320'
+  run_id: 2025-12-08T22-14-07_grind_suggestions_f83e6b6

@@ -280,8 +280,8 @@ def parse_queue_file(queue_file: Path) -> QueueFile:
     for entry in data.get("queue", []):
         entries.append(QueueEntry.parse(entry))
 
-    # Keep completed as-is
-    completed = data.get("completed", [])
+    # Keep completed as-is (ensure it's a list, not None)
+    completed = data.get("completed") or []
 
     return QueueFile(default_source=source, entries=entries, completed=completed, path=queue_file)
 

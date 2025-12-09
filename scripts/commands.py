@@ -287,10 +287,9 @@ def cmd_run(args) -> int:
                 print(f"Error executing run: {e}", file=sys.stderr)
                 import traceback
                 traceback.print_exc()
-                # Remove failed entry and save
-                queue.entries.pop(0)
-                queue.save()
-                continue
+                # Keep entry on queue - don't remove on error
+                print(f"\nEntry kept on queue. Fix the issue and run './bench run' again.")
+                return 1
 
             # Mark as done
             if not args.dry_run and metadata:

@@ -172,6 +172,12 @@ def create_parser() -> argparse.ArgumentParser:
         help="Override the test source (default: kim-em/mathlib4@feat/tryAtEachStepFromEnv)",
     )
 
+    # tui command
+    subparsers.add_parser(
+        "tui",
+        help="Launch the interactive terminal UI",
+    )
+
     return parser
 
 
@@ -181,9 +187,9 @@ def main(args=None):
     parsed = parser.parse_args(args)
 
     if parsed.command is None:
-        # Launch TUI when no command provided
-        from .tui.app import run_tui
-        return run_tui()
+        # Show help when no command provided
+        parser.print_help()
+        return 0
 
     # Import handlers here to avoid circular imports
     if parsed.command == "init":
@@ -219,6 +225,9 @@ def main(args=None):
     elif parsed.command == "selftest":
         from .commands import cmd_selftest
         return cmd_selftest(parsed)
+    elif parsed.command == "tui":
+        from .tui.app import run_tui
+        return run_tui()
     else:
         parser.print_help()
         return 1
